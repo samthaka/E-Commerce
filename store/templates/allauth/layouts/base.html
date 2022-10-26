@@ -1,0 +1,153 @@
+{% load static %}
+{% load i18n %}
+{% load allauth %}
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>{% block title %}Account Login{% endblock title %}</title>
+        <link rel="stylesheet" href="{% static 'css/main.css' %}">
+        <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+        <style>
+            #home{
+                border-style:solid;
+                font-style: oblique;
+            }
+            .custom-btn {
+                width: 150px;
+                background-color: rgb(197, 5, 214) !important;
+                color: white !important;
+                padding: 10px 0 !important;
+                font-size: 18px !important;
+                font-weight: bold !important;
+                border-radius: 7px !important;
+                border: none !important;
+                cursor: pointer !important;
+                text-decoration: none !important;
+                display: inline-block !important;
+                text-align: center;
+                outline: none !important;
+                box-shadow: none !important;
+            }
+            .custom-btn:hover {
+                background-color: rgb(153, 8, 167) !important;
+            }
+            .custom-btn:active {
+                background-color: rgb(147, 6, 160) !important;
+            }
+        </style>
+    </head>
+
+    <body>
+        <nav class="navbar navbar-expand-lg navbar-light bg-light">
+        <a class="navbar-brand" id="home" href="/">Ecommerce</a>
+        {% block body %}
+            {% if messages %}
+                <div>
+                    <strong>{% trans "Messages:" %}</strong>
+                    <ul>
+                        {% for message in messages %}<li>{{ message }}</li>{% endfor %}
+                    </ul>
+                </div>
+            {% endif %}
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ml-auto">
+                    {% if user.is_authenticated %}
+                        {% url 'account_email' as email_url_ %}
+                        {% if email_url_ %}
+                            <li class="nav-item">
+                                <a href="{{ email_url_ }}" class="nav-link">{% trans "Change Email" %}</a>
+                            </li>
+                        {% endif %}
+                        {% url 'account_change_password' as change_password_url_ %}
+                        {% if change_password_url_ %}
+                            <li class="nav-item">
+                                <a href="{{ change_password_url_ }}" class="nav-link">{% trans "Change Password" %}</a>
+                            </li>
+                        {% endif %}
+                        {% url 'socialaccount_connections' as connections_url_ %}
+                        {% if connections_url_ %}
+                            <li class="nav-item">
+                                <a href="{{ connections_url_ }}" class="nav-link">{% trans "Account Connections" %}</a>
+                            </li>
+                        {% endif %}
+                        {% url 'mfa_index' as mfa_url_ %}
+                        {% if mfa_url_ %}
+                            <li class="nav-item">
+                                <a href="{{ mfa_url_ }}" class="nav-link">{% trans "Two-Factor Authentication" %}</a>
+                            </li>
+                        {% endif %}
+                        {% url 'usersessions_list' as usersessions_list_url_ %}
+                        {% if usersessions_list_url_ %}
+                            <li class="nav-item">
+                                <a href="{{ usersessions_list_url_ }}" class="nav-link">{% trans "Sessions" %}</a>
+                            </li>
+                        {% endif %}
+                        {% url 'account_logout' as logout_url_ %}
+                        {% if logout_url_ %}
+                            <li class="nav-item">
+                                <a href="{{ logout_url_ }}" class="nav-link">{% trans "Sign Out" %}</a>
+                            </li>
+                        {% endif %}
+                    {% else %}
+                        {% url 'account_login' as login_url_ %}
+                        {% if login_url_ %}
+                            <li class="nav-item">
+                                <a href="{{ login_url_ }}" class="nav-link">{% trans "Sign In" %}</a>
+                            </li>
+                        {% endif %}
+                        {% url 'account_signup' as signup_url_ %}
+                        {% if signup_url_ %}
+                            <li class="nav-item">
+                                <a href="{{ signup_url_ }}" class="nav-link">{% trans "Sign Up" %}</a>
+                            </li>
+                        {% endif %}
+                    {% endif %}
+                </ul>
+            </div>
+            </nav>
+            {% block content %}
+            {% endblock content %}
+
+            <div class="container mt-5">
+                <div class="row justify-content-center">
+                    <div class="col-md-8">
+                        {% block main-content %}
+                        <p class="text-center">
+                            Sign in using Google.
+                        </p>
+                        <div class="text-center">
+                        {% block page-content %}
+                            {% url 'google' as google_login_url %}
+
+                            {% element form method="post" no_visible_fields=True %}
+                            {% slot actions %}
+                                {% csrf_token %}
+                                <button type="submit" class="custom-btn">Continue with Google</button>
+                            {% endslot %}
+                        {% endelement %}
+                        {% endblock  %}
+
+                            
+                        </div>
+                        {% endblock %}
+                    </div>
+                </div>
+            </div>
+
+        {% endblock body %}
+
+        {% block extra_body %}
+        {% endblock extra_body %}
+
+        <footer class="footer mt-auto py-3 bg-light">
+            <div class="container text-center">
+                <span class="text-muted">&copy; 2024 Ecommerce. All rights reserved.</span>
+            </div>
+        </footer>
+    
+        <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.5.2/dist/js/bootstrap.bundle.min.js"></script>
+    </body>
+</html>

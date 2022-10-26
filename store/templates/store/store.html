@@ -1,0 +1,69 @@
+{% extends 'store/main.html' %}
+{% load static %}
+{% block content %}
+
+<!-- search bar -->
+<form method="GET" action=""></form>
+    <input type="text" id="search-bar" placeholder="Search products or categories" onkeyup="filterProducts()">
+    <button type="submit">Search</button>
+</form>
+
+<div id="search-popup" style="display:none;">
+    <!-- Results from AJAX will be injected here -->
+</div>
+
+{% if not products %}
+    <p>No products found for "{{ query }}".</p>
+{% endif %}
+
+<div id="products">
+<div class="row store-pd-container">
+
+    <!-- Rendering prodcuts from the database -->
+
+    {% for product in products %}
+    <div class="col-lg-4 product-card" class="product-card" data-name="{{ product.name }}" data-category="{{ product.category }}">
+        <div class="img-container">
+            <img class="thumbnail" src="{{product.imageURL}}">
+        </div>
+
+        <div class="product">
+            <h6><strong>{{product.name}}</strong></h6>
+            <h6>{{product.description}}</h6>
+            <hr>
+            <button data-product={{product.id}} data-action="add" 
+                class="btn btn-outline-secondary add-btn update-cart"
+                style="height: 27px; width: 100px;"><small style="display: flex;" >Add to cart</small></button>
+            <a href="#" class="btn btn-outline-success" 
+                style="height: 27px; width: 60px;"><small style="display: flex;">View</small></a>
+            <h4 style="display: inline-block; float:none;">${{product.price|floatformat:2}}</h4>
+        </div>
+    </div>
+    {% endfor %}
+
+    
+</div>
+</div>
+
+<script>
+    function filterProducts() {
+        const query = document.getElementById('search-bar').value.toLowerCase();
+        const products = document.querySelectorAll('.product-card');
+
+        products.forEach(product => {
+            const productName = product.getAttribute('data-name').toLowerCase();
+            const productCategory = product.getAttribute('data-category').toLowerCase();
+
+            if (productName.includes(query) || productCategory.includes(query)) {
+                product.style.display = 'block';
+            } else {
+                product.style.display = 'none';
+            }
+        });
+    }
+</script>
+
+<script src="{% static 'js/search.js' %}"></script>
+
+
+{% endblock content %}
