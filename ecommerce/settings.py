@@ -163,6 +163,8 @@ LOGIN_REDIRECT_URL = '/'
 # Optional: Use email as the login identifier instead of username
 ACCOUNT_EMAIL_REQUIRED = True
 ACCOUNT_USERNAME_REQUIRED = False
+ACCOUNT_EMAIL_VERIFICATION = 'mandatory'
+ACCOUNT_EMAIL_SUBJECT_PREFIX = ''
 
 # Optional: Disable email verification for social accounts (Google/Facebook)
 SOCIALACCOUNT_EMAIL_VERIFICATION = 'none'

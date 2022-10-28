@@ -18,69 +18,25 @@
         <nav class="navbar navbar-expand-lg navbar-light account-navbar">
         <a class="navbar-brand account-brand" id="home" href="/">Ecommerce</a>
         {% block body %}
-            {% if messages %}
-                <div>
-                    <strong>{% trans "Messages:" %}</strong>
-                    <ul>
-                        {% for message in messages %}<li>{{ message }}</li>{% endfor %}
-                    </ul>
-                </div>
-            {% endif %}
+            {% include "account/_messages.html" %}
+            {% if not user.is_authenticated %}
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav ml-auto">
-                    {% if user.is_authenticated %}
-                        {% url 'account_email' as email_url_ %}
-                        {% if email_url_ %}
-                            <li class="nav-item">
-                                <a href="{{ email_url_ }}" class="nav-link">{% trans "Change Email" %}</a>
-                            </li>
-                        {% endif %}
-                        {% url 'account_change_password' as change_password_url_ %}
-                        {% if change_password_url_ %}
-                            <li class="nav-item">
-                                <a href="{{ change_password_url_ }}" class="nav-link">{% trans "Change Password" %}</a>
-                            </li>
-                        {% endif %}
-                        {% url 'socialaccount_connections' as connections_url_ %}
-                        {% if connections_url_ %}
-                            <li class="nav-item">
-                                <a href="{{ connections_url_ }}" class="nav-link">{% trans "Account Connections" %}</a>
-                            </li>
-                        {% endif %}
-                        {% url 'mfa_index' as mfa_url_ %}
-                        {% if mfa_url_ %}
-                            <li class="nav-item">
-                                <a href="{{ mfa_url_ }}" class="nav-link">{% trans "Two-Factor Authentication" %}</a>
-                            </li>
-                        {% endif %}
-                        {% url 'usersessions_list' as usersessions_list_url_ %}
-                        {% if usersessions_list_url_ %}
-                            <li class="nav-item">
-                                <a href="{{ usersessions_list_url_ }}" class="nav-link">{% trans "Sessions" %}</a>
-                            </li>
-                        {% endif %}
-                        {% url 'account_logout' as logout_url_ %}
-                        {% if logout_url_ %}
-                            <li class="nav-item">
-                                <a href="{{ logout_url_ }}" class="nav-link">{% trans "Sign Out" %}</a>
-                            </li>
-                        {% endif %}
-                    {% else %}
-                        {% url 'account_login' as login_url_ %}
-                        {% if login_url_ %}
-                            <li class="nav-item">
-                                <a href="{{ login_url_ }}" class="nav-link">{% trans "Sign In" %}</a>
-                            </li>
-                        {% endif %}
-                        {% url 'account_signup' as signup_url_ %}
-                        {% if signup_url_ %}
-                            <li class="nav-item">
-                                <a href="{{ signup_url_ }}" class="nav-link">{% trans "Sign Up" %}</a>
-                            </li>
-                        {% endif %}
+                    {% url 'account_login' as login_url_ %}
+                    {% if login_url_ %}
+                        <li class="nav-item">
+                            <a href="{{ login_url_ }}" class="nav-link account-nav-link account-nav-login">{% trans "Sign In" %}</a>
+                        </li>
+                    {% endif %}
+                    {% url 'account_signup' as signup_url_ %}
+                    {% if signup_url_ %}
+                        <li class="nav-item">
+                            <a href="{{ signup_url_ }}" class="nav-link account-nav-link account-nav-signup">{% trans "Sign Up" %}</a>
+                        </li>
                     {% endif %}
                 </ul>
             </div>
+            {% endif %}
             </nav>
             <main class="allauth-main">
                 <section class="allauth-panel">
