@@ -18,8 +18,10 @@ from django.urls import path, include
 
 from django.conf.urls.static import static
 from django.conf import settings
+from store.views import account_profile
 
 urlpatterns = [
+    path('accounts/profile/', account_profile, name='account_profile'),
     path('accounts/', include('allauth.urls')),  # Include allauth URLs
     path('admin/', admin.site.urls),
     path('', include('store.urls')),
