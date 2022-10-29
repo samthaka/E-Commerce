@@ -1,0 +1,21 @@
+{% if messages %}
+    <div class="account-toast-stack" role="region" aria-label="Notifications" aria-live="polite">
+        {% for message in messages %}
+            <div class="account-toast account-toast-{{ message.tags }}" role="status">
+                <span>{{ message }}</span>
+                <button class="account-toast-close" type="button" aria-label="Dismiss notification">&times;</button>
+            </div>
+        {% endfor %}
+    </div>
+    <script>
+        document.querySelectorAll('.account-toast').forEach(function (toast) {
+            function dismissToast() {
+                toast.classList.add('account-toast-dismissed');
+                window.setTimeout(function () { toast.remove(); }, 180);
+            }
+
+            toast.querySelector('.account-toast-close').addEventListener('click', dismissToast);
+            window.setTimeout(dismissToast, 6000);
+        });
+    </script>
+{% endif %}

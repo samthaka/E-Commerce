@@ -1,0 +1,20 @@
+{% load account %}
+{% user_display user as user_display %}
+{% autoescape off %}
+Hello from E-commerce!
+
+You're receiving this email because {{ user_display }} provided this email address to register an account with E-commerce.
+
+{% if code %}
+Your email verification code is:
+{{ code }}
+
+Enter this code in the open browser window to confirm your email address.
+{% else %}
+To confirm your email address, open this link:
+{{ activate_url }}
+{% endif %}
+
+Thank you for joining E-commerce!
+E-commerce
+{% endautoescape %}
