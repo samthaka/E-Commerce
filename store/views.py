@@ -1,5 +1,6 @@
 from django.shortcuts import render
 from django.http import JsonResponse
+from django.contrib.auth.decorators import login_required
 from .models import *
 import json
 import datetime
@@ -149,3 +150,14 @@ def search(request):
         'query': query,
     }
     return render(request, 'store.html', context)
+
+
+@login_required
+def account_profile(req):
+    customer = Customer.objects.filter(user=req.user).first()
+    order = Order.objects.filter(customer=customer, complete=False).first() if customer else None
+    context = {
+        'cartItems': order.get_cart_items if order else 0,
+        'categories': Product.objects.values_list('category', flat=True).distinct(),
+    }
+    return render(req, 'account/profile.html', context)

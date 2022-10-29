@@ -1,0 +1,19 @@
+{% extends "account/base_entrance.html" %}
+{% load i18n %}
+{% load allauth %}
+
+{% block head_title %}
+    {% trans "Confirm your email address" %}
+{% endblock head_title %}
+
+{% block content %}
+    {% element h1 %}
+        {% trans "Check your inbox" %}
+    {% endelement %}
+    {% element p %}
+        {% trans "We've sent you an email with a confirmation link. Open the link to verify your email address and finish creating your E-commerce account." %}
+    {% endelement %}
+    {% element p %}
+        {% trans "If you don't see the email soon, check your spam folder." %}
+    {% endelement %}
+{% endblock content %}

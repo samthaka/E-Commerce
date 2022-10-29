@@ -3,6 +3,10 @@ from .models import *
 
 from django.utils.html import mark_safe
 
+admin.site.site_header = 'E-commerce'
+admin.site.site_title = 'E-commerce'
+admin.site.index_title = 'Admin'
+
 class ProductAdmin(admin.ModelAdmin):
     list_display = ('name', 'price', 'description', 'image_preview')
     search_fields = ('name',)
