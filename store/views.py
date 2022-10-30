@@ -4,6 +4,7 @@ from django.contrib.auth.decorators import login_required
 from .models import *
 import json
 import datetime
+from decimal import Decimal
 from django.contrib.auth.models import User
 from .forms import SearchForm
 
@@ -86,6 +87,9 @@ def updateItem(req):
     action = data['action']
 
     if req.user.is_authenticated:
+        if action not in ('add', 'remove'):
+            return JsonResponse('Invalid action.', status=400, safe=False)
+
         customer, created = Customer.objects.get_or_create(user=req.user)  # Ensure customer exists
         product = Product.objects.get(id=productId)
         order, created = Order.objects.get_or_create(customer=customer, complete=False)
@@ -105,32 +109,33 @@ def updateItem(req):
 
         return JsonResponse('Item was added.', safe=False)
     else:
-        return JsonResponse('User is not logged in.', status=401)
+        return JsonResponse('User is not logged in.', status=401, safe=False)
 
 
 def processOrder(req):
-    transaction_id = datetime.datetime.now().timestamp()
+    if not req.user.is_authenticated:
+        return JsonResponse('User is not logged in.', status=401, safe=False)
+
     data = json.loads(req.body)
-    if req.user.is_authenticated:
-        customer, created = Customer.objects.get_or_create(user=req.user)  # Ensure customer exists
-        order, created = Order.objects.get_or_create(customer=customer, complete=False)
-        total = float(data['form']['total'])
-        order.transaction_id = transaction_id
+    customer, created = Customer.objects.get_or_create(user=req.user)
+    order, created = Order.objects.get_or_create(customer=customer, complete=False)
+    total = Decimal(str(data['form']['total']))
 
-        if total == order.get_cart_total:
-            order.complete = True
-        order.save()
+    if total != order.get_cart_total:
+        return JsonResponse('Order total does not match.', status=400, safe=False)
 
-        ShippingModel.objects.create(
-            customer=customer,
-            order=order,
-            address=data['shipping']['address'],
-            city=data['shipping']['city'],
-            state=data['shipping']['state'],
-            zipcode=data['shipping']['zipcode'],
-        )
-    else:
-        print('User is not logged in.')
+    order.transaction_id = datetime.datetime.now().timestamp()
+    order.complete = True
+    order.save()
+
+    ShippingModel.objects.create(
+        customer=customer,
+        order=order,
+        address=data['shipping']['address'],
+        city=data['shipping']['city'],
+        state=data['shipping']['state'],
+        zipcode=data['shipping']['zipcode'],
+    )
 
     return JsonResponse('Payment complete.', safe=False)
 
@@ -141,15 +146,17 @@ def search(request):
     products = Product.objects.all()
 
     if query:
-        # Filter products by name or category name
+        # Filter products by name or category
         products = Product.objects.filter(name__icontains=query) | \
-                   Product.objects.filter(category__name__icontains=query)
+                   Product.objects.filter(category__icontains=query)
     
     context = {
         'products': products,
         'query': query,
+        'cartItems': 0,
+        'categories': Product.objects.values_list('category', flat=True).distinct(),
     }
-    return render(request, 'store.html', context)
+    return render(request, 'store/store.html', context)
 
 
 @login_required
