@@ -9,5 +9,6 @@ urlpatterns = [
     path('process_order/', views.processOrder, name="processOrder"),
     path('search/', views.search, name='search'),  # Store page with search functionality
     path('accounts/profile/', views.account_profile, name='account_profile'),
+    path('orders/', views.order_history, name='order_history'),
 
 ]

@@ -1,0 +1,25 @@
+{% extends 'store/main.html' %}
+{% block content %}
+
+<h1>My Orders</h1>
+
+{% for section in sections %}
+<section class="box-element" aria-labelledby="orders-{{ forloop.counter }}">
+    <h2 id="orders-{{ forloop.counter }}">{{ section.label }}</h2>
+    {% for order in section.orders %}
+    <article class="order-history-entry">
+        <h3>Order #{{ order.id }} - {{ order.date_ordered|date:"M j, Y" }}</h3>
+        <ul>
+            {% for item in order.orderitem_set.all %}
+            <li>{{ item.product.name }} x{{ item.quantity }} - ${{ item.get_total|floatformat:2 }}</li>
+            {% endfor %}
+        </ul>
+        <p>Total: ${{ order.get_cart_total|floatformat:2 }}</p>
+    </article>
+    {% empty %}
+    <p>No {{ section.label|lower }} orders yet.</p>
+    {% endfor %}
+</section>
+{% endfor %}
+
+{% endblock content %}

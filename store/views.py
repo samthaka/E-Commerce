@@ -1,4 +1,4 @@
-from django.shortcuts import render
+from django.shortcuts import redirect, render
 from django.http import JsonResponse
 from django.contrib.auth.decorators import login_required
 from .models import *
@@ -76,6 +76,9 @@ def checkout(req):
         order = {'get_cart_total': 0, 'get_cart_items': 0}  # For non-authenticated users
         cartItems = order['get_cart_items']
 
+    if cartItems < 1:
+        return redirect('cart')
+
     context = {'items': items, 'order': order, 'cartItems': cartItems, 'email': email}
     return render(req, 'store/checkout.html', context)
 
@@ -119,6 +122,10 @@ def processOrder(req):
     data = json.loads(req.body)
     customer, created = Customer.objects.get_or_create(user=req.user)
     order, created = Order.objects.get_or_create(customer=customer, complete=False)
+
+    if order.get_cart_items < 1:
+        return JsonResponse('Cannot checkout with an empty cart.', status=400, safe=False)
+
     total = Decimal(str(data['form']['total']))
 
     if total != order.get_cart_total:
@@ -168,3 +175,26 @@ def account_profile(req):
         'categories': Product.objects.values_list('category', flat=True).distinct(),
     }
     return render(req, 'account/profile.html', context)
+
+
+@login_required
+def order_history(req):
+    customer, created = Customer.objects.get_or_create(user=req.user)
+    orders = Order.objects.filter(
+        customer=customer,
+        complete=True,
+    ).prefetch_related('orderitem_set__product').order_by('-date_ordered')
+    sections = [
+        {
+            'label': label,
+            'orders': orders.filter(status=status),
+        }
+        for status, label in Order.STATUS_CHOICES
+    ]
+    open_order = Order.objects.filter(customer=customer, complete=False).first()
+    context = {
+        'sections': sections,
+        'cartItems': open_order.get_cart_items if open_order else 0,
+        'categories': Product.objects.values_list('category', flat=True).distinct(),
+    }
+    return render(req, 'store/order_history.html', context)

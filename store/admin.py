@@ -22,7 +22,10 @@ class ProductAdmin(admin.ModelAdmin):
 
 admin.site.register(Customer)
 admin.site.register(Product,ProductAdmin)
-admin.site.register(Order)
+@admin.register(Order)
+class OrderAdmin(admin.ModelAdmin):
+    list_display = ("id", "customer", "date_ordered", "complete", "status")
+    list_filter = ("complete", "status")
 admin.site.register(OrderItem)
 admin.site.register(ShippingModel)
 

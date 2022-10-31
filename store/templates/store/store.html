@@ -23,19 +23,25 @@
 
     {% for product in products %}
     <div class="col-lg-4 product-card" class="product-card" data-name="{{ product.name }}" data-category="{{ product.category }}">
-        <div class="img-container">
-            <img class="thumbnail" src="{{product.imageURL}}">
-        </div>
+        <a href="#product-description-{{ product.id }}" class="product-detail-trigger"
+            data-description-target="product-description-{{ product.id }}" aria-expanded="false">
+            <div class="img-container">
+                <img class="thumbnail" src="{{product.imageURL}}" alt="{{ product.name }}">
+            </div>
+            <h6 class="product-title"><strong>{{product.name}}</strong></h6>
+        </a>
 
         <div class="product">
-            <h6><strong>{{product.name}}</strong></h6>
-            <h6>{{product.description}}</h6>
+            <p id="product-description-{{ product.id }}" class="product-description" hidden>
+                {{product.description}}
+            </p>
             <hr>
             <button data-product={{product.id}} data-action="add" 
                 class="btn btn-outline-secondary add-btn update-cart"
                 style="height: 27px; width: 100px;"><small style="display: flex;" >Add to cart</small></button>
-            <a href="#" class="btn btn-outline-success" 
-                style="height: 27px; width: 60px;"><small style="display: flex;">View</small></a>
+            <button type="button" class="btn btn-outline-success product-detail-trigger"
+                data-description-target="product-description-{{ product.id }}" aria-expanded="false"
+                style="height: 27px; width: 60px;"><small style="display: flex;">View</small></button>
             <h4 style="display: inline-block; float:none;">${{product.price|floatformat:2}}</h4>
         </div>
     </div>
@@ -61,6 +67,20 @@
             }
         });
     }
+</script>
+
+<script>
+    document.querySelectorAll('.product-detail-trigger').forEach(trigger => {
+        trigger.addEventListener('click', event => {
+            event.preventDefault();
+            const description = document.getElementById(trigger.dataset.descriptionTarget);
+            const shouldShow = description.hidden;
+            description.hidden = !shouldShow;
+            document.querySelectorAll(
+                `[data-description-target="${trigger.dataset.descriptionTarget}"]`
+            ).forEach(control => control.setAttribute('aria-expanded', shouldShow));
+        });
+    });
 </script>
 
 <script src="{% static 'js/search.js' %}"></script>

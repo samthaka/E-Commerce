@@ -77,7 +77,7 @@
             </div>
         </button>
         <ul class="dropdown-menu" aria-labelledby="dropdownMenu2">
-            <li><a class="dropdown-item" href="{% url 'store' %}">Orders</a></li>
+            <li><a class="dropdown-item" href="{% url 'order_history' %}">My Orders</a></li>
             <small style="font-family: fantasy;">Categories</small>
             {% for category in categories %}
                 <li><a class="dropdown-item" href="?category={{ category }}">{{ category|capfirst }}</a></li>

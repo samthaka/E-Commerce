@@ -57,6 +57,7 @@ class StoreModelTests(TestCase):
         self.assertEqual(item.get_total, Decimal("25.00"))
         self.assertEqual(str(shipping), "1 Main Street")
         self.assertEqual(str(self.order), "None")
+        self.assertEqual(self.order.status, Order.STATUS_PENDING)
 
 
 class StoreViewTests(TestCase):
@@ -86,6 +87,15 @@ class StoreViewTests(TestCase):
         self.assertEqual(response.context["cartItems"], 0)
         self.assertCountEqual(response.context["categories"], ["Accessories", "Watches"])
         self.assertFalse(Customer.objects.exists())
+        self.assertContains(response, 'class="product-description" hidden')
+        self.assertContains(response, "View")
+        self.assertEqual(
+            response.content.count(
+                f'data-description-target="product-description-{self.bag.pk}"'.encode()
+            ),
+            2,
+        )
+        self.assertContains(response, f'href="{reverse("order_history")}"')
 
     def test_store_filters_products_by_category(self):
         response = self.client.get(reverse("store"), {"category": "Watches"})
@@ -107,10 +117,18 @@ class StoreViewTests(TestCase):
         checkout_response = self.client.get(reverse("checkout"))
 
         self.assertEqual(cart_response.status_code, 200)
-        self.assertEqual(checkout_response.status_code, 200)
+        self.assertRedirects(checkout_response, reverse("cart"))
         self.assertEqual(cart_response.context["order"]["get_cart_items"], 0)
-        self.assertEqual(checkout_response.context["email"], None)
+        self.assertContains(cart_response, 'id="checkout-button"')
+        self.assertContains(cart_response, 'disabled aria-disabled="true"')
         self.assertEqual(list(cart_response.context["items"]), [])
+
+    def test_authenticated_empty_cart_cannot_open_checkout(self):
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse("checkout"))
+
+        self.assertRedirects(response, reverse("cart"))
 
     def test_authenticated_cart_and_checkout_show_open_order_items(self):
         self.client.force_login(self.user)
@@ -141,6 +159,32 @@ class StoreViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(set(response.context["products"]), {self.bag, self.watch})
+
+    def test_order_history_groups_completed_orders_by_status(self):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        expected = {}
+        for status in (Order.STATUS_DELIVERED, Order.STATUS_PENDING, Order.STATUS_CANCELLED):
+            order = Order.objects.create(customer=customer, complete=True, status=status)
+            OrderItem.objects.create(order=order, product=self.bag, quantity=1)
+            expected[status] = order
+
+        response = self.client.get(reverse("order_history"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "store/order_history.html")
+        self.assertContains(response, "Delivered")
+        self.assertContains(response, "Pending (in delivery)")
+        self.assertContains(response, "Cancelled")
+        self.assertContains(response, "Canvas Bag")
+        self.assertCountEqual(
+            [
+                order
+                for section in response.context["sections"]
+                for order in section["orders"]
+            ],
+            expected.values(),
+        )
 
     def test_search_form_validates_query_length(self):
         self.assertTrue(SearchForm(data={"query": "bag"}).is_valid())
@@ -280,6 +324,31 @@ class StoreViewTests(TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertFalse(Customer.objects.exists())
         self.assertFalse(Order.objects.exists())
+        self.assertFalse(ShippingModel.objects.exists())
+
+    def test_empty_cart_cannot_be_processed_as_an_order(self):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer)
+        payload = {
+            "form": {"total": "0"},
+            "shipping": {
+                "address": "1 Main Street",
+                "city": "Springfield",
+                "state": "IL",
+                "zipcode": "62701",
+            },
+        }
+
+        response = self.client.post(
+            reverse("processOrder"),
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        order.refresh_from_db()
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(order.complete)
         self.assertFalse(ShippingModel.objects.exists())
 
     def test_order_with_incorrect_total_is_not_completed_or_shipped(self):
