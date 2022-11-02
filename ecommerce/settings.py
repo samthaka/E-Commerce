@@ -157,6 +157,16 @@ EMAIL_HOST_USER = os.getenv('GMAIL_ADDRESS', '')
 EMAIL_HOST_PASSWORD = os.getenv('GMAIL_APP_PASSWORD', '')
 DEFAULT_FROM_EMAIL = os.getenv('GMAIL_ADDRESS', '')
 
+SHIPPO_API_TOKEN = os.getenv("SHIPPO_API_TOKEN", "")
+SHIPPO_TEST_MODE = os.getenv("SHIPPO_TEST_MODE", "true").lower() == "true"
+SHIPPO_API_URL = os.getenv("SHIPPO_API_URL", "https://api.goshippo.com")
+SHIPPO_FROM_NAME = os.getenv("SHIPPO_FROM_NAME", "E-commerce")
+SHIPPO_FROM_EMAIL = os.getenv("SHIPPO_FROM_EMAIL", "crpas.ke@gmail.com")
+SHIPPO_FROM_STREET = os.getenv("SHIPPO_FROM_STREET", "215 Clayton St")
+SHIPPO_FROM_CITY = os.getenv("SHIPPO_FROM_CITY", "San Francisco")
+SHIPPO_FROM_STATE = os.getenv("SHIPPO_FROM_STATE", "CA")
+SHIPPO_FROM_ZIP = os.getenv("SHIPPO_FROM_ZIP", "94117")
+
 # Redirect after login
 LOGIN_REDIRECT_URL = '/'
 

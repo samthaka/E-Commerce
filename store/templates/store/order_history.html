@@ -14,12 +14,134 @@
             <li>{{ item.product.name }} x{{ item.quantity }} - ${{ item.get_total|floatformat:2 }}</li>
             {% endfor %}
         </ul>
-        <p>Total: ${{ order.get_cart_total|floatformat:2 }}</p>
+        <p>Total including shipping: ${{ order.get_order_total|floatformat:2 }}</p>
+        {% for shipment in order.shippingmodel_set.all %}
+        <section class="shipping-details" data-order-id="{{ order.id }}">
+            <h4>Shipping</h4>
+            <p>{{ shipment.carrier }} {{ shipment.service_level }}</p>
+            <p>Shipping cost: ${{ shipment.shipping_cost|floatformat:2 }}</p>
+            {% if shipment.tracking_number %}
+            <p>Tracking: <a href="{{ shipment.tracking_url }}" target="_blank" rel="noopener">{{ shipment.tracking_number }}</a></p>
+            <p>Status: <span class="tracking-status">{{ shipment.tracking_status|default:"Label created" }}</span>
+                <span class="tracking-details">{{ shipment.tracking_status_details }}</span></p>
+            <button type="button" class="btn btn-outline-dark refresh-tracking">Refresh tracking</button>
+            {% endif %}
+            <div class="return-shipment-controls">
+                <button type="button" class="btn btn-outline-dark prepare-return">Prepare a return</button>
+                <div class="return-rates"></div>
+                {% for return_shipment in shipment.returns.all %}
+                <div class="return-shipment" data-return-id="{{ return_shipment.id }}">
+                    <p>Return {{ return_shipment.carrier }} {{ return_shipment.service_level }}</p>
+                    {% if return_shipment.label_url %}
+                    <p><a href="{{ return_shipment.label_url }}" rel="noopener">Download return label</a></p>
+                    {% endif %}
+                    {% if return_shipment.tracking_number %}
+                    <p>Tracking: <a href="{{ return_shipment.tracking_url }}" target="_blank" rel="noopener">{{ return_shipment.tracking_number }}</a></p>
+                    <p>Status: <span class="tracking-status">{{ return_shipment.tracking_status|default:"Label created" }}</span>
+                        <span class="tracking-details">{{ return_shipment.tracking_status_details }}</span></p>
+                    <button type="button" class="btn btn-outline-dark refresh-tracking" data-return-id="{{ return_shipment.id }}">Refresh return tracking</button>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </section>
+        {% endfor %}
     </article>
     {% empty %}
     <p>No {{ section.label|lower }} orders yet.</p>
     {% endfor %}
 </section>
 {% endfor %}
+
+<script>
+    async function postOrderJson(url, payload) {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrftoken},
+            body: JSON.stringify(payload || {})
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || data);
+        return data;
+    }
+
+    document.querySelectorAll('.shipping-details').forEach((section) => {
+        const orderId = section.dataset.orderId;
+        const ratesBox = section.querySelector('.return-rates');
+        const prepareButton = section.querySelector('.prepare-return');
+        let returnId = null;
+
+        prepareButton.addEventListener('click', async () => {
+            prepareButton.disabled = true;
+            ratesBox.textContent = 'Getting return rates…';
+            try {
+                const data = await postOrderJson(`/orders/${orderId}/return/rates/`);
+                returnId = data.return_id;
+                ratesBox.replaceChildren();
+                const select = document.createElement('select');
+                select.className = 'form-control mb-2';
+                data.rates.forEach((rate) => {
+                    const option = document.createElement('option');
+                    option.value = rate.object_id;
+                    option.textContent = `${rate.provider} ${rate.servicelevel} - ${rate.currency} ${rate.amount}`;
+                    select.appendChild(option);
+                });
+                const purchaseButton = document.createElement('button');
+                purchaseButton.type = 'button';
+                purchaseButton.className = 'btn btn-success';
+                purchaseButton.textContent = 'Create return label';
+                purchaseButton.addEventListener('click', async () => {
+                    purchaseButton.disabled = true;
+                    try {
+                        const result = await postOrderJson(
+                            `/orders/${orderId}/return/${returnId}/label/`,
+                            {rate_id: select.value}
+                        );
+                        ratesBox.replaceChildren();
+                        const message = document.createElement('p');
+                        message.textContent = result.tracking_number
+                            ? `Return label created. Tracking: ${result.tracking_number}`
+                            : 'Return label created.';
+                        ratesBox.appendChild(message);
+                        if (result.label_url) {
+                            const link = document.createElement('a');
+                            link.href = result.label_url;
+                            link.textContent = 'Download return label';
+                            link.rel = 'noopener';
+                            ratesBox.appendChild(link);
+                        }
+                    } catch (error) {
+                        ratesBox.textContent = error.message;
+                        purchaseButton.disabled = false;
+                    }
+                });
+                ratesBox.append(select, purchaseButton);
+            } catch (error) {
+                ratesBox.textContent = error.message;
+                prepareButton.disabled = false;
+            }
+        });
+    });
+
+    document.querySelectorAll('.refresh-tracking').forEach((button) => {
+        button.addEventListener('click', async () => {
+            const section = button.closest('.shipping-details');
+            button.disabled = true;
+            try {
+                const data = await postOrderJson(
+                    `/orders/${section.dataset.orderId}/tracking/`,
+                    button.dataset.returnId ? {return_id: button.dataset.returnId} : {}
+                );
+                const container = button.parentElement;
+                container.querySelector('.tracking-status').textContent = data.status;
+                container.querySelector('.tracking-details').textContent = data.details;
+            } catch (error) {
+                window.alert(error.message);
+            } finally {
+                button.disabled = false;
+            }
+        });
+    });
+</script>
 
 {% endblock content %}

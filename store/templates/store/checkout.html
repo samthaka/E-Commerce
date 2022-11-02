@@ -15,36 +15,50 @@
                         </div>
                         <hr>
                     </div>
+                    {% if requires_shipping %}
                     <div id="shipping-info">
-                        
-                        <p>Shipping Info:</p>
+                        <p>Shipping address <small>(US addresses only)</small></p>
                         <hr>
                         <div class="form-field">
-                            <input required class="form-control" type="text" name="address" placeholder="Address..." >
+                            <input required class="form-control" type="text" name="name" value="{{ request.user.get_full_name|default:request.user.username }}" autocomplete="name" placeholder="Recipient name">
                         </div>
                         <div class="form-field">
-                            <input required class="form-control" type="text" name="city" placeholder="City..." >
+                            <input required class="form-control" type="text" name="address" autocomplete="street-address" placeholder="Street address">
                         </div>
                         <div class="form-field">
-                            <input required class="form-control" type="text" name="state" placeholder="State..." >
+                            <input required class="form-control" type="text" name="city" autocomplete="address-level2" placeholder="City">
                         </div>
                         <div class="form-field">
-                            <input required class="form-control" type="text" name="zipcode" placeholder="Zipcode..." >
+                            <select required class="form-control" name="state" autocomplete="address-level1">
+                                <option value="">Select state</option>
+                                {% for code, state_name in states %}
+                                <option value="{{ code }}">{{ state_name }}</option>
+                                {% endfor %}
+                            </select>
                         </div>
                         <div class="form-field">
-                            <input required class="form-control" type="text" name="country" placeholder="Country..." >
+                            <input required class="form-control" type="text" name="zipcode" autocomplete="postal-code" pattern="\d{5}(-\d{4})?" placeholder="ZIP code">
+                        </div>
+                        <div class="form-field">
+                            <input class="form-control" type="text" value="United States" aria-label="Shipping country" readonly>
+                            <input type="hidden" name="country" value="US">
                         </div>
                     </div>
+                    {% endif %}
                     <hr>
-                    <input type="submit" id="form-button" class="btn btn-success btn-block" value="Continue">
+                    <input type="submit" id="form-button" class="btn btn-success btn-block" value="{% if requires_shipping %}Get shipping rates{% else %}Continue{% endif %}">
                 </form>
+                <div id="shipping-error" class="alert alert-danger hidden" role="alert"></div>
+                <div id="shipping-rates" class="hidden">
+                    <h4>Choose a shipping service</h4>
+                    <div id="rate-options"></div>
+                </div>
             </div>
             <br>
 
             <div class="payment-element hidden" id="payment-info">
-                <small>Paypal Options</small>
-                <button id="make-payment" class="btn btn-outline-dark"
-                style="margin-left: 16px;">Make Payment</button>
+                <p>Order total including shipping: <strong id="checkout-total"></strong></p>
+                <button type="button" id="make-payment" class="btn btn-outline-dark">Place order</button>
             </div>
         </div>
 
@@ -70,79 +84,120 @@
                 {% endfor %}
                 <hr>
                 <h5>Items: {{order.get_cart_items}}</h5>
-                <h5>Total: ${{order.get_cart_total|floatformat:2}}</h5>
+                <h5>Subtotal: ${{order.get_cart_total|floatformat:2}}</h5>
             </div>
         </div>
     </div>
 
     <script>
+        const form = document.getElementById('form');
+        const baseTotal = Number('{{ order.get_cart_total }}');
+        const shippingRequired = '{{ requires_shipping|yesno:"true,false" }}' === 'true';
+        let selectedRate = null;
+        let availableRates = [];
 
-        var total = '{{order.get_cart_total}}'
-        var email = '{{email}}'
-
-        if(user != 'AnonymousUser'){
-            document.getElementById('user-info').innerHTML = ''
-            // document.getElementById('form-wrapper').classList.add('hidden')
+        if (user !== 'AnonymousUser') {
+            document.getElementById('user-info').innerHTML = '';
         }
 
+        function showShippingError(message) {
+            const error = document.getElementById('shipping-error');
+            error.textContent = message;
+            error.classList.remove('hidden');
+        }
 
-        var form = document.getElementById('form')
-        form.addEventListener('submit', (e)=>{
-            e.preventDefault()
-            document.getElementById('form-button').classList.add('hidden')
-            document.getElementById('payment-info').classList.remove('hidden')
-        })
-
-        document.getElementById('make-payment').addEventListener('click', ()=>{
-            submitFormData()
-        })
-
-        function submitFormData(){
-            var userFormData = {
-                'name': null,
-                'email': null,
-                'total': total,
-            }
-
-            var shippingInfo = {
-                'address': null,
-                'city': null,
-                'state': null,
-                'zipcode': null
-            }
-
-            shippingInfo.address = form.address.value
-            shippingInfo.city = form.city.value
-            shippingInfo.state = form.state.value
-            shippingInfo.zipcode = form.zipcode.value
-
-            if(user == 'AnonymousUser'){
-                userFormData.name = form.name.value
-                userFormData.email = form.email.value
-            }
-            else{
-                userFormData.name = user
-                userFormData.email = email
-            }
-
-            var url = '/process_order/'
-            fetch(url, {
+        async function postJson(url, payload) {
+            const response = await fetch(url, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': csrftoken,
-                },
-                body: JSON.stringify({
-                    'form': userFormData,
-                    'shipping': shippingInfo
-                })
-            })
-            .then((res)=>res.json())
-            .then(data => {
-                window.location.href = "{% url 'store' %}"
-            })
+                headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrftoken},
+                body: JSON.stringify(payload)
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || data);
+            }
+            return data;
         }
 
+        function displayRates(rates) {
+            const options = document.getElementById('rate-options');
+            options.replaceChildren();
+            availableRates = rates;
+            rates.forEach((rate, index) => {
+                const label = document.createElement('label');
+                label.className = 'form-field d-block border rounded p-2';
+                const radio = document.createElement('input');
+                radio.type = 'radio';
+                radio.name = 'shipping-rate';
+                radio.value = rate.object_id;
+                radio.required = true;
+                radio.addEventListener('change', () => {
+                    selectedRate = rate;
+                    document.getElementById('checkout-total').textContent =
+                        '$' + (baseTotal + Number(rate.amount)).toFixed(2);
+                    document.getElementById('payment-info').classList.remove('hidden');
+                });
+                const description = document.createTextNode(
+                    ` ${rate.provider} ${rate.servicelevel} - ${rate.currency} ${rate.amount}` +
+                    (rate.estimated_days ? ` (about ${rate.estimated_days} days)` : '')
+                );
+                label.append(radio, description);
+                options.appendChild(label);
+            });
+            document.getElementById('shipping-rates').classList.remove('hidden');
+        }
+
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            document.getElementById('shipping-error').classList.add('hidden');
+            document.getElementById('payment-info').classList.add('hidden');
+            selectedRate = null;
+            const address = shippingRequired ? {
+                    name: form.name.value,
+                    email: user === 'AnonymousUser' ? form.email.value : '{{ email|escapejs }}',
+                    address: form.address.value,
+                    city: form.city.value,
+                    state: form.state.value,
+                    zipcode: form.zipcode.value,
+                    country: 'US'
+                } : {};
+            document.getElementById('form-button').disabled = true;
+            try {
+                const data = await postJson('{% url "shipping_rates" %}', address);
+                displayRates(data.rates);
+            } catch (error) {
+                showShippingError(error.message);
+            } finally {
+                document.getElementById('form-button').disabled = false;
+            }
+        });
+
+        document.getElementById('make-payment').addEventListener('click', async () => {
+            if (!selectedRate) {
+                showShippingError('Choose a shipping service first.');
+                return;
+            }
+            document.getElementById('make-payment').disabled = true;
+            try {
+                const total = (baseTotal + Number(selectedRate.amount)).toFixed(2);
+                await postJson('{% url "processOrder" %}', {
+                    form: {total: total},
+                    shipping: {
+                        rate_id: selectedRate.object_id,
+                        name: shippingRequired ? form.name.value : '',
+                        email: user === 'AnonymousUser' ? form.email.value : '{{ email|escapejs }}',
+                        address: shippingRequired ? form.address.value : '',
+                        city: shippingRequired ? form.city.value : '',
+                        state: shippingRequired ? form.state.value : '',
+                        zipcode: shippingRequired ? form.zipcode.value : ''
+                    }
+                });
+                window.location.href = "{% url 'order_history' %}";
+            } catch (error) {
+                showShippingError(error.message);
+                document.getElementById('make-payment').disabled = false;
+            }
+        });
     </script>
 
 {% endblock content %}

@@ -4,12 +4,14 @@ from types import SimpleNamespace
 
 from django.contrib import admin
 from django.contrib.auth.models import User
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
+from unittest.mock import patch
 
 from .admin import ProductAdmin
 from .forms import SearchForm
-from .models import Customer, Order, OrderItem, Product, ShippingModel
+from .models import Customer, Order, OrderItem, Product, ReturnShipment, ShippingModel
+from .shippo import order_parcels
 
 
 class StoreModelTests(TestCase):
@@ -71,11 +73,43 @@ class StoreViewTests(TestCase):
             name="Canvas Bag",
             price=Decimal("12.50"),
             category="Accessories",
+            shipping_weight=Decimal("1.00"),
+            shipping_length=Decimal("12.00"),
+            shipping_width=Decimal("10.00"),
+            shipping_height=Decimal("2.00"),
         )
         self.watch = Product.objects.create(
             name="Classic Watch",
             price=Decimal("40.00"),
             category="Watches",
+            shipping_weight=Decimal("0.50"),
+            shipping_length=Decimal("8.00"),
+            shipping_width=Decimal("6.00"),
+            shipping_height=Decimal("3.00"),
+        )
+
+    def add_shipping_quote(self, order, shipping_data=None, amount="2.50"):
+        shipping_data = shipping_data or {
+            "address": "1 Main Street",
+            "city": "Springfield",
+            "state": "IL",
+            "zipcode": "62701",
+        }
+        return ShippingModel.objects.create(
+            customer=order.customer,
+            order=order,
+            recipient_name="Shopper",
+            recipient_email="shopper@example.com",
+            **shipping_data,
+            rates=[{
+                "object_id": "rate_test",
+                "amount": amount,
+                "currency": "USD",
+                "provider": "USPS",
+                "servicelevel": "Ground Advantage",
+            }],
+            parcel_manifest=order_parcels(order),
+            shippo_shipment_id="shipment_test",
         )
 
     def test_store_lists_products_and_categories_for_anonymous_user(self):
@@ -254,13 +288,17 @@ class StoreViewTests(TestCase):
         customer = Customer.objects.create(user=self.user)
         order = Order.objects.create(customer=customer)
         OrderItem.objects.create(order=order, product=self.bag, quantity=2)
+        self.add_shipping_quote(order)
         payload = {
-            "form": {"total": "25.00"},
+            "form": {"total": "27.50"},
             "shipping": {
+                "rate_id": "rate_test",
+                "name": "Shopper",
                 "address": "1 Main Street",
                 "city": "Springfield",
                 "state": "IL",
                 "zipcode": "62701",
+                "email": "shopper@example.com",
             },
         }
 
@@ -277,20 +315,24 @@ class StoreViewTests(TestCase):
         shipping = ShippingModel.objects.get(order=order)
         self.assertEqual(shipping.address, "1 Main Street")
         self.assertEqual(shipping.customer, customer)
+        self.assertEqual(shipping.shipping_cost, Decimal("2.50"))
+        self.assertEqual(shipping.selected_rate_id, "rate_test")
+        self.assertEqual(order.get_order_total, Decimal("27.50"))
 
     def test_order_total_comparison_preserves_decimal_cents(self):
         self.client.force_login(self.user)
         customer = Customer.objects.create(user=self.user)
         order = Order.objects.create(customer=customer)
-        product = Product.objects.create(name="Sticker", price=Decimal("0.10"))
+        product = Product.objects.create(name="Sticker", price=Decimal("0.10"), digital=True)
         OrderItem.objects.create(order=order, product=product, quantity=1)
+        shipping = self.add_shipping_quote(order, amount="0.00")
+        shipping.rates[0]["object_id"] = "no_shipping_required"
+        shipping.parcel_manifest = []
+        shipping.save()
         payload = {
             "form": {"total": "0.10"},
             "shipping": {
-                "address": "1 Main Street",
-                "city": "Springfield",
-                "state": "IL",
-                "zipcode": "62701",
+                "rate_id": "no_shipping_required",
             },
         }
 
@@ -359,12 +401,16 @@ class StoreViewTests(TestCase):
         payload = {
             "form": {"total": "1.00"},
             "shipping": {
+                "rate_id": "rate_test",
+                "name": "Shopper",
                 "address": "1 Main Street",
                 "city": "Springfield",
                 "state": "IL",
                 "zipcode": "62701",
+                "email": "shopper@example.com",
             },
         }
+        self.add_shipping_quote(order)
 
         response = self.client.post(
             reverse("processOrder"),
@@ -376,7 +422,197 @@ class StoreViewTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertFalse(order.complete)
         self.assertFalse(order.transaction_id)
-        self.assertFalse(ShippingModel.objects.exists())
+        self.assertTrue(ShippingModel.objects.filter(order=order).exists())
+
+    @override_settings(SHIPPO_API_TOKEN="shippo_test_token", SHIPPO_TEST_MODE=True)
+    @patch("store.views.ShippoClient.create_shipment")
+    def test_shipping_quote_is_limited_to_valid_us_addresses(self, create_shipment):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer)
+        OrderItem.objects.create(order=order, product=self.bag, quantity=1)
+        create_shipment.return_value = {
+            "object_id": "shipment_test",
+            "rates": [{
+                "object_id": "rate_test",
+                "amount": "4.25",
+                "currency": "USD",
+                "provider": "USPS",
+                "servicelevel": {"name": "Ground Advantage"},
+                "estimated_days": 4,
+            }],
+        }
+        address = {
+            "name": "Shopper",
+            "email": "shopper@example.com",
+            "address": "1 Main Street",
+            "city": "Springfield",
+            "state": "IL",
+            "zipcode": "62701",
+            "country": "US",
+        }
+
+        response = self.client.post(
+            reverse("shipping_rates"),
+            data=json.dumps(address),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["rates"][0]["amount"], "4.25")
+        create_shipment.assert_called_once()
+        shipping = ShippingModel.objects.get(order=order)
+        self.assertEqual(shipping.parcel_manifest, order_parcels(order))
+
+        address["zipcode"] = "123"
+        invalid_response = self.client.post(
+            reverse("shipping_rates"),
+            data=json.dumps(address),
+            content_type="application/json",
+        )
+        self.assertEqual(invalid_response.status_code, 400)
+        self.assertEqual(create_shipment.call_count, 1)
+
+    def test_order_cannot_use_stale_shipping_quote_after_cart_changes(self):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer)
+        OrderItem.objects.create(order=order, product=self.bag, quantity=1)
+        self.add_shipping_quote(order)
+        OrderItem.objects.filter(order=order, product=self.bag).update(quantity=2)
+
+        response = self.client.post(
+            reverse("processOrder"),
+            data=json.dumps({
+                "form": {"total": "15.00"},
+                "shipping": {
+                    "rate_id": "rate_test",
+                    "name": "Shopper",
+                    "address": "1 Main Street",
+                    "city": "Springfield",
+                    "state": "IL",
+                    "zipcode": "62701",
+                    "email": "shopper@example.com",
+                },
+            }),
+            content_type="application/json",
+        )
+
+        order.refresh_from_db()
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(order.complete)
+
+    def test_order_cannot_use_quote_after_shipping_address_changes(self):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer)
+        OrderItem.objects.create(order=order, product=self.bag, quantity=1)
+        self.add_shipping_quote(order)
+        changed_address = {
+            "rate_id": "rate_test",
+            "name": "Shopper",
+            "address": "2 Other Street",
+            "city": "Springfield",
+            "state": "IL",
+            "zipcode": "62701",
+            "email": "shopper@example.com",
+        }
+
+        response = self.client.post(
+            reverse("processOrder"),
+            data=json.dumps({
+                "form": {"total": "15.00"},
+                "shipping": changed_address,
+            }),
+            content_type="application/json",
+        )
+
+        order.refresh_from_db()
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(order.complete)
+
+    @override_settings(SHIPPO_API_TOKEN="shippo_test_token", SHIPPO_TEST_MODE=True)
+    @patch("store.views.ShippoClient.create_transaction")
+    @patch("store.views.ShippoClient.create_shipment")
+    def test_customer_can_get_return_rates_and_create_return_label(
+        self, create_shipment, create_transaction
+    ):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer, complete=True)
+        OrderItem.objects.create(order=order, product=self.bag, quantity=1)
+        shipping = self.add_shipping_quote(order)
+        create_shipment.return_value = {
+            "object_id": "return_shipment_test",
+            "rates": [{
+                "object_id": "return_rate_test",
+                "amount": "3.75",
+                "currency": "USD",
+                "provider": "USPS",
+                "servicelevel": "Ground Advantage",
+            }],
+        }
+        create_transaction.return_value = {
+            "status": "SUCCESS",
+            "tracking_number": "TEST123",
+            "tracking_url_provider": "https://tracking.example/test123",
+            "label_url": "https://labels.example/test123.pdf",
+            "provider": "USPS",
+        }
+
+        rates_response = self.client.post(
+            reverse("return_rates", args=[order.pk]),
+            data=json.dumps({}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(rates_response.status_code, 200)
+        return_shipment = ReturnShipment.objects.get(shipping=shipping)
+        label_response = self.client.post(
+            reverse("purchase_return_label", args=[order.pk, return_shipment.pk]),
+            data=json.dumps({"rate_id": "return_rate_test"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(label_response.status_code, 200)
+        self.assertEqual(label_response.json()["tracking_number"], "TEST123")
+        return_shipment.refresh_from_db()
+        self.assertEqual(return_shipment.shipping_cost, Decimal("3.75"))
+        self.assertEqual(return_shipment.selected_rate_id, "return_rate_test")
+        create_shipment.assert_called_once()
+        create_transaction.assert_called_once_with("return_rate_test")
+
+    @override_settings(SHIPPO_API_TOKEN="shippo_test_token", SHIPPO_TEST_MODE=True)
+    @patch("store.views.ShippoClient.track")
+    def test_customer_can_refresh_tracking_and_delivery_updates_order(self, track):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer, complete=True)
+        OrderItem.objects.create(order=order, product=self.bag, quantity=1)
+        shipping = self.add_shipping_quote(order)
+        shipping.tracking_number = "TEST123"
+        shipping.carrier = "USPS"
+        shipping.save()
+        track.return_value = {
+            "tracking_status": {
+                "status": "DELIVERED",
+                "status_details": "Package delivered",
+            }
+        }
+
+        response = self.client.post(
+            reverse("refresh_tracking", args=[order.pk]),
+            data=json.dumps({}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "DELIVERED")
+        shipping.refresh_from_db()
+        order.refresh_from_db()
+        self.assertEqual(shipping.tracking_status, "DELIVERED")
+        self.assertEqual(order.status, Order.STATUS_DELIVERED)
+        track.assert_called_once_with("USPS", "TEST123")
 
 
 class AuthenticationAndAccountTests(TestCase):
