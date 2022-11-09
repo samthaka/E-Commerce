@@ -123,6 +123,37 @@
   margin: 10px 0;
 }
 
+.saved-address-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.saved-address-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid #d5ddd9;
+  border-radius: 8px;
+  color: #263832;
+  background: #f8faf8;
+  text-align: left;
+  transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+}
+
+.saved-address-card:hover,
+.saved-address-card:focus-visible {
+  border-color: #285b4a;
+  background: #eef4f0;
+  box-shadow: 0 2px 8px #00000014;
+}
+
+.saved-address-card span {
+  color: #687772;
+  font-size: 0.9rem;
+}
+
 .btn-block {
   width: 100%;
 }

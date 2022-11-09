@@ -178,6 +178,43 @@ class StoreViewTests(TestCase):
         self.assertEqual(list(checkout_response.context["items"]), list(order.orderitem_set.all()))
         self.assertEqual(checkout_response.context["email"], self.user.email)
 
+    def test_checkout_prefills_latest_used_address_and_lists_older_addresses(self):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        older_order = Order.objects.create(customer=customer, complete=True)
+        ShippingModel.objects.create(
+            customer=customer,
+            order=older_order,
+            recipient_name="Shopper",
+            address="1 Old Street",
+            city="Springfield",
+            state="IL",
+            zipcode="62701",
+        )
+        latest_order = Order.objects.create(customer=customer, complete=True)
+        latest_shipping = ShippingModel.objects.create(
+            customer=customer,
+            order=latest_order,
+            recipient_name="Shopper",
+            address="2 New Street",
+            city="Chicago",
+            state="IL",
+            zipcode="60601",
+        )
+        current_order = Order.objects.create(customer=customer)
+        OrderItem.objects.create(order=current_order, product=self.bag, quantity=1)
+
+        response = self.client.get(reverse("checkout"))
+
+        self.assertEqual(response.context["latest_shipping"], latest_shipping)
+        self.assertEqual(response.context["saved_addresses"], list(
+            ShippingModel.objects.filter(order=older_order)
+        ))
+        self.assertContains(response, 'value="2 New Street"')
+        self.assertContains(response, 'value="Chicago"')
+        self.assertContains(response, 'data-address="1 Old Street"')
+        self.assertNotContains(response, 'data-address="2 New Street"')
+
     def test_search_filters_by_product_name_and_category(self):
         name_response = self.client.get(reverse("search"), {"query": "canvas"})
         category_response = self.client.get(reverse("search"), {"query": "watches"})

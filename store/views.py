@@ -118,12 +118,34 @@ def cart(req):
 
 # Checkout function for rendering checkout view
 def checkout(req):
+    saved_addresses = []
     if req.user.is_authenticated:
         email = req.user.email
         customer, created = Customer.objects.get_or_create(user=req.user)  # Ensure customer exists
         order, created = Order.objects.get_or_create(customer=customer, complete=False)
         items = order.orderitem_set.all()
         cartItems = order.get_cart_items
+        previous_shipping = (
+            ShippingModel.objects.filter(customer=customer, order__complete=True)
+            .exclude(address="")
+            .select_related("order")
+            .order_by("-order__date_ordered", "-date_added")
+        )
+        seen_addresses = set()
+        for shipping in previous_shipping:
+            address_key = tuple(
+                (value or "").strip().casefold()
+                for value in (
+                    shipping.address,
+                    shipping.city,
+                    shipping.state,
+                    shipping.zipcode,
+                    shipping.country,
+                )
+            )
+            if address_key not in seen_addresses:
+                saved_addresses.append(shipping)
+                seen_addresses.add(address_key)
     else:
         email = None
         items = []  # For non-authenticated users
@@ -141,6 +163,8 @@ def checkout(req):
         'email': email,
         'states': US_STATES,
         'requires_shipping': bool(physical_items),
+        'latest_shipping': saved_addresses[0] if saved_addresses else None,
+        'saved_addresses': saved_addresses[1:],
     }
     return render(req, 'store/checkout.html', context)
 

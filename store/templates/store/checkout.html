@@ -20,29 +20,48 @@
                         <p>Shipping address <small>(US addresses only)</small></p>
                         <hr>
                         <div class="form-field">
-                            <input required class="form-control" type="text" name="name" value="{{ request.user.get_full_name|default:request.user.username }}" autocomplete="name" placeholder="Recipient name">
+                            <input required class="form-control" type="text" name="recipient_name" value="{{ latest_shipping.recipient_name|default:request.user.get_full_name|default:request.user.username }}" autocomplete="name" placeholder="Recipient name">
                         </div>
                         <div class="form-field">
-                            <input required class="form-control" type="text" name="address" autocomplete="street-address" placeholder="Street address">
+                            <input required class="form-control" type="text" name="address" value="{{ latest_shipping.address|default:'' }}" autocomplete="street-address" placeholder="Street address">
                         </div>
                         <div class="form-field">
-                            <input required class="form-control" type="text" name="city" autocomplete="address-level2" placeholder="City">
+                            <input required class="form-control" type="text" name="city" value="{{ latest_shipping.city|default:'' }}" autocomplete="address-level2" placeholder="City">
                         </div>
                         <div class="form-field">
                             <select required class="form-control" name="state" autocomplete="address-level1">
                                 <option value="">Select state</option>
                                 {% for code, state_name in states %}
-                                <option value="{{ code }}">{{ state_name }}</option>
+                                <option value="{{ code }}" {% if latest_shipping.state == code %}selected{% endif %}>{{ state_name }}</option>
                                 {% endfor %}
                             </select>
                         </div>
                         <div class="form-field">
-                            <input required class="form-control" type="text" name="zipcode" autocomplete="postal-code" pattern="\d{5}(-\d{4})?" placeholder="ZIP code">
+                            <input required class="form-control" type="text" name="zipcode" value="{{ latest_shipping.zipcode|default:'' }}" autocomplete="postal-code" pattern="\d{5}(-\d{4})?" placeholder="ZIP code">
                         </div>
                         <div class="form-field">
                             <input class="form-control" type="text" value="United States" aria-label="Shipping country" readonly>
                             <input type="hidden" name="country" value="US">
                         </div>
+                        {% if saved_addresses %}
+                        <div class="form-field">
+                            <p class="mb-2">Use another saved address</p>
+                            <div class="saved-address-list">
+                                {% for saved_address in saved_addresses %}
+                                <button type="button" class="saved-address-card"
+                                    data-recipient-name="{{ saved_address.recipient_name }}"
+                                    data-address="{{ saved_address.address }}"
+                                    data-city="{{ saved_address.city }}"
+                                    data-state="{{ saved_address.state }}"
+                                    data-zipcode="{{ saved_address.zipcode }}">
+                                    <strong>{{ saved_address.recipient_name }}</strong>
+                                    <span>{{ saved_address.address }}</span>
+                                    <span>{{ saved_address.city }}, {{ saved_address.state }} {{ saved_address.zipcode }}</span>
+                                </button>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        {% endif %}
                     </div>
                     {% endif %}
                     <hr>
@@ -147,13 +166,28 @@
             document.getElementById('shipping-rates').classList.remove('hidden');
         }
 
+        document.querySelectorAll('.saved-address-card').forEach((button) => {
+            button.addEventListener('click', () => {
+                form.recipient_name.value = button.dataset.recipientName;
+                form.address.value = button.dataset.address;
+                form.city.value = button.dataset.city;
+                form.state.value = button.dataset.state;
+                form.zipcode.value = button.dataset.zipcode;
+                selectedRate = null;
+                document.getElementById('shipping-error').classList.add('hidden');
+                document.getElementById('payment-info').classList.add('hidden');
+                document.getElementById('shipping-rates').classList.add('hidden');
+                document.getElementById('rate-options').replaceChildren();
+            });
+        });
+
         form.addEventListener('submit', async (event) => {
             event.preventDefault();
             document.getElementById('shipping-error').classList.add('hidden');
             document.getElementById('payment-info').classList.add('hidden');
             selectedRate = null;
             const address = shippingRequired ? {
-                    name: form.name.value,
+                    name: form.recipient_name.value,
                     email: user === 'AnonymousUser' ? form.email.value : '{{ email|escapejs }}',
                     address: form.address.value,
                     city: form.city.value,
@@ -184,7 +218,7 @@
                     form: {total: total},
                     shipping: {
                         rate_id: selectedRate.object_id,
-                        name: shippingRequired ? form.name.value : '',
+                        name: shippingRequired ? form.recipient_name.value : '',
                         email: user === 'AnonymousUser' ? form.email.value : '{{ email|escapejs }}',
                         address: shippingRequired ? form.address.value : '',
                         city: shippingRequired ? form.city.value : '',
