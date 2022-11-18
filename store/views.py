@@ -5,6 +5,7 @@ from django.db import transaction
 from django.views.decorators.http import require_POST
 from .models import *
 import json
+import logging
 import datetime
 from decimal import Decimal
 import re
@@ -20,6 +21,9 @@ from .shippo import (
     transaction_fields,
 )
 from .forms import SearchForm
+
+
+logger = logging.getLogger(__name__)
 
 
 US_STATES = (
@@ -61,6 +65,23 @@ def _shipping_address_error(data):
     if not re.fullmatch(r"\d{5}(?:-\d{4})?", data["zipcode"].strip()):
         return "Enter a valid US ZIP code."
     return None
+
+
+def _shipment_rates_error(shipment, fallback):
+    messages = shipment.get("messages")
+    if isinstance(messages, str):
+        details = [messages]
+    elif isinstance(messages, list):
+        details = [
+            message.get("text") or message.get("message") or str(message)
+            if isinstance(message, dict)
+            else str(message)
+            for message in messages
+        ]
+    else:
+        details = []
+    details = [detail.strip() for detail in details if detail.strip()]
+    return f"{fallback} {' '.join(details)}" if details else fallback
 
 
 # Create your views here.
@@ -300,7 +321,17 @@ def shipping_rates(req):
             shipment = ShippoClient().create_shipment(sender, recipient, parcels)
             rates = serialize_rates(shipment.get("rates", []))
             if not rates:
-                return _json_error("Shippo did not return any available shipping rates.", 422)
+                logger.warning(
+                    "Shippo returned no checkout rates: %s",
+                    _shipment_rates_error(
+                        shipment,
+                        "Shippo did not return any available shipping rates.",
+                    ),
+                )
+                return _json_error(
+                    "No shipping rates are available right now. Please try again later.",
+                    422,
+                )
             shipment_id = shipment.get("object_id", "")
         else:
             rates = [{
@@ -424,7 +455,17 @@ def create_return_rates(req, order_id):
         shipment = ShippoClient().create_shipment(recipient, origin_address(), parcels)
         rates = serialize_rates(shipment.get("rates", []))
         if not rates:
-            return _json_error("Shippo did not return any return-shipping rates.", 422)
+            logger.warning(
+                "Shippo returned no return-shipping rates: %s",
+                _shipment_rates_error(
+                    shipment,
+                    "Shippo did not return any return-shipping rates.",
+                ),
+            )
+            return _json_error(
+                "No return-shipping rates are available right now. Please try again later.",
+                422,
+            )
     except InvalidParcelError as exc:
         return _json_error(str(exc), 400)
     except ShippoError as exc:

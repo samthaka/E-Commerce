@@ -510,6 +510,45 @@ class StoreViewTests(TestCase):
         self.assertEqual(invalid_response.status_code, 400)
         self.assertEqual(create_shipment.call_count, 1)
 
+    @override_settings(SHIPPO_API_TOKEN="shippo_test_token", SHIPPO_TEST_MODE=True)
+    @patch("store.views.ShippoClient.create_shipment")
+    def test_shipping_quote_logs_shippo_messages_for_multiple_item_cart(self, create_shipment):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer)
+        OrderItem.objects.create(order=order, product=self.bag, quantity=15)
+        create_shipment.return_value = {
+            "object_id": "shipment_test",
+            "rates": [],
+            "messages": [{"text": "Carrier does not support this parcel combination."}],
+        }
+
+        with self.assertLogs("store.views", level="WARNING") as logged:
+            response = self.client.post(
+                reverse("shipping_rates"),
+                data=json.dumps({
+                    "name": "Shopper",
+                    "address": "1 Main Street",
+                    "city": "Springfield",
+                    "state": "IL",
+                    "zipcode": "62701",
+                }),
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.json()["error"],
+            "No shipping rates are available right now. Please try again later.",
+        )
+        self.assertIn("Carrier does not support this parcel combination.", logged.output[0])
+        parcels = create_shipment.call_args.args[2]
+        self.assertEqual(len(parcels), 15)
+        self.assertEqual(
+            {parcel["weight"] for parcel in parcels},
+            {"1.00"},
+        )
+
     def test_order_cannot_use_stale_shipping_quote_after_cart_changes(self):
         self.client.force_login(self.user)
         customer = Customer.objects.create(user=self.user)
