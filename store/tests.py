@@ -8,10 +8,294 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from unittest.mock import patch
 
-from .admin import ProductAdmin
+from .admin import OrderAdmin, ProductAdmin
 from .forms import SearchForm
 from .models import Customer, Order, OrderItem, Product, ReturnShipment, ShippingModel
-from .shippo import order_parcels
+from .shippo import (
+    InvalidParcelError,
+    ShippoClient,
+    ShippoError,
+    find_rate,
+    order_parcels,
+    origin_address,
+    recipient_address,
+    serialize_rates,
+    transaction_fields,
+)
+
+
+class ShippoClientTests(TestCase):
+    @override_settings(SHIPPO_API_TOKEN="", SHIPPO_TEST_MODE=True)
+    def test_client_requires_an_api_token(self):
+        with self.assertRaisesMessage(ShippoError, "Shippo API token is not configured."):
+            ShippoClient()
+
+    @override_settings(SHIPPO_API_TOKEN="live_token", SHIPPO_TEST_MODE=True)
+    def test_test_mode_requires_a_test_api_token(self):
+        with self.assertRaisesMessage(
+            ShippoError,
+            "Shippo test mode requires a test API token.",
+        ):
+            ShippoClient()
+
+    @override_settings(
+        SHIPPO_API_TOKEN="shippo_test_token",
+        SHIPPO_TEST_MODE=True,
+        SHIPPO_API_URL="https://shippo.example/",
+    )
+    @patch("store.shippo.requests.request")
+    def test_request_returns_json_and_sends_authentication_and_payload(self, request):
+        response = SimpleNamespace(ok=True, json=lambda: {"object_id": "shipment"})
+        request.return_value = response
+
+        result = ShippoClient().request("POST", "/shipments/", {"async": False})
+
+        self.assertEqual(result, {"object_id": "shipment"})
+        request.assert_called_once_with(
+            "POST",
+            "https://shippo.example/shipments/",
+            headers={
+                "Authorization": "ShippoToken shippo_test_token",
+                "Content-Type": "application/json",
+            },
+            json={"async": False},
+            timeout=20,
+        )
+
+    @override_settings(SHIPPO_API_TOKEN="shippo_test_token", SHIPPO_TEST_MODE=True)
+    @patch("store.shippo.requests.request")
+    def test_request_translates_transport_and_response_errors(self, request):
+        request.side_effect = ShippoClientTests.request_exception()
+        with self.assertRaisesMessage(
+            ShippoError,
+            "Shippo could not be reached. Please try again.",
+        ):
+            ShippoClient().request("GET", "/tracks/")
+
+        cases = (
+            (SimpleNamespace(ok=True, json=self.raise_json_error), "Shippo returned an unreadable response."),
+            (SimpleNamespace(ok=True, json=lambda: []), "Shippo returned an unexpected response."),
+            (SimpleNamespace(ok=False, json=lambda: {"detail": "Invalid address"}), "Invalid address"),
+            (SimpleNamespace(ok=False, json=lambda: {"message": "Rate limit"}), "Rate limit"),
+            (SimpleNamespace(ok=False, json=lambda: {}), "Shippo request failed."),
+        )
+        for response, message in cases:
+            with self.subTest(message=message):
+                request.side_effect = None
+                request.return_value = response
+                with self.assertRaisesMessage(ShippoError, message):
+                    ShippoClient().request("GET", "/tracks/")
+
+    @staticmethod
+    def raise_json_error():
+        raise ValueError("invalid json")
+
+    @staticmethod
+    def request_exception():
+        import requests
+
+        return requests.Timeout("timeout")
+
+    @override_settings(SHIPPO_API_TOKEN="shippo_test_token", SHIPPO_TEST_MODE=True)
+    @patch("store.shippo.requests.request")
+    def test_shipment_and_transaction_send_expected_payloads(self, request):
+        request.return_value = SimpleNamespace(ok=True, json=lambda: {"status": "SUCCESS"})
+        client = ShippoClient()
+
+        shipment = client.create_shipment({"name": "Sender"}, {"name": "Buyer"}, [{"weight": "1"}])
+        transaction = client.create_transaction("rate_123")
+
+        self.assertEqual(shipment, {"status": "SUCCESS"})
+        self.assertEqual(transaction, {"status": "SUCCESS"})
+        self.assertEqual(request.call_args_list[0].args, ("POST", "https://api.goshippo.com/shipments/"))
+        self.assertEqual(request.call_args_list[0].kwargs["json"], {
+            "address_from": {"name": "Sender"},
+            "address_to": {"name": "Buyer"},
+            "parcels": [{"weight": "1"}],
+            "async": False,
+        })
+        self.assertEqual(request.call_args_list[1].args, ("POST", "https://api.goshippo.com/transactions/"))
+        self.assertEqual(request.call_args_list[1].kwargs["json"], {
+            "rate": "rate_123",
+            "label_file_type": "PDF",
+            "async": False,
+        })
+
+    @override_settings(SHIPPO_API_TOKEN="shippo_test_token", SHIPPO_TEST_MODE=True)
+    @patch("store.shippo.requests.request")
+    def test_transaction_rejects_failed_label_purchase(self, request):
+        request.return_value = SimpleNamespace(
+            ok=True,
+            json=lambda: {"status": "ERROR", "messages": ["Invalid rate"]},
+        )
+
+        with self.assertRaisesMessage(ShippoError, "['Invalid rate']"):
+            ShippoClient().create_transaction("bad_rate")
+
+    @override_settings(SHIPPO_API_TOKEN="shippo_test_token", SHIPPO_TEST_MODE=True)
+    @patch("store.shippo.requests.request")
+    def test_tracking_requires_both_carrier_and_tracking_number(self, request):
+        client = ShippoClient()
+        for carrier, tracking_number in (("", "123"), ("USPS", "")):
+            with self.subTest(carrier=carrier, tracking_number=tracking_number):
+                with self.assertRaisesMessage(
+                    ShippoError,
+                    "A carrier and tracking number are required.",
+                ):
+                    client.track(carrier, tracking_number)
+        request.assert_not_called()
+
+        request.return_value = SimpleNamespace(
+            ok=True,
+            json=lambda: {"tracking_status": {"status": "TRANSIT"}},
+        )
+        self.assertEqual(
+            client.track("USPS", "TRACK123"),
+            {"tracking_status": {"status": "TRANSIT"}},
+        )
+        self.assertEqual(
+            request.call_args.args[:2],
+            ("POST", "https://api.goshippo.com/tracks/usps/TRACK123/"),
+        )
+
+    def test_rate_and_transaction_serializers(self):
+        rates = serialize_rates([
+            {"object_id": "rate_1", "amount": "4.25"},
+            {"object_id": "rate_missing_amount"},
+            {"amount": "1.00"},
+            {
+                "object_id": "rate_2",
+                "amount": "5.00",
+                "servicelevel": "Priority",
+                "provider": "USPS",
+                "estimated_days": 2,
+                "duration_terms": "Ships in two days",
+            },
+        ])
+
+        self.assertEqual(rates, [
+            {
+                "object_id": "rate_1",
+                "amount": "4.25",
+                "currency": "USD",
+                "provider": "",
+                "servicelevel": "",
+                "estimated_days": None,
+                "duration_terms": "",
+            },
+            {
+                "object_id": "rate_2",
+                "amount": "5.00",
+                "currency": "USD",
+                "provider": "USPS",
+                "servicelevel": "Priority",
+                "estimated_days": 2,
+                "duration_terms": "Ships in two days",
+            },
+        ])
+        self.assertEqual(find_rate(rates, "rate_2"), rates[1])
+        self.assertIsNone(find_rate(rates, "missing"))
+        self.assertEqual(
+            serialize_rates([{
+                "object_id": "rate_3",
+                "amount": "6.00",
+                "servicelevel": {"name": "Ground"},
+            }])[0]["servicelevel"],
+            "Ground",
+        )
+        self.assertEqual(
+            transaction_fields({
+                "tracking_number": "TRACK123",
+                "tracking_url_provider": "https://tracking.example/123",
+                "label_url": "https://labels.example/123.pdf",
+                "carrier": "USPS",
+            }),
+            {
+                "tracking_number": "TRACK123",
+                "tracking_url": "https://tracking.example/123",
+                "label_url": "https://labels.example/123.pdf",
+                "carrier": "USPS",
+                "tracking_status": "pre_transit",
+            },
+        )
+        self.assertEqual(transaction_fields({"provider": "UPS"}), {"carrier": "UPS"})
+
+    @override_settings(
+        SHIPPO_FROM_NAME="Warehouse",
+        SHIPPO_FROM_EMAIL="warehouse@example.com",
+        SHIPPO_FROM_STREET="10 Main St",
+        SHIPPO_FROM_CITY="Chicago",
+        SHIPPO_FROM_STATE="IL",
+        SHIPPO_FROM_ZIP="60601",
+    )
+    def test_address_serializers(self):
+        self.assertEqual(origin_address(), {
+            "name": "Warehouse",
+            "street1": "10 Main St",
+            "city": "Chicago",
+            "state": "IL",
+            "zip": "60601",
+            "country": "US",
+            "email": "warehouse@example.com",
+        })
+        self.assertEqual(
+            recipient_address({"name": "Buyer", "address": "1 Oak St"}, "buyer@example.com"),
+            {
+                "name": "Buyer",
+                "street1": "1 Oak St",
+                "city": "",
+                "state": "",
+                "zip": "",
+                "country": "US",
+                "email": "buyer@example.com",
+            },
+        )
+
+    def test_order_parcels_skips_digital_items_and_builds_each_physical_parcel(self):
+        customer = Customer.objects.create()
+        order = Order.objects.create(customer=customer)
+        physical = Product.objects.create(
+            name="Physical",
+            price=Decimal("10.00"),
+            shipping_weight=Decimal("1.25"),
+            shipping_length=Decimal("10.00"),
+            shipping_width=Decimal("8.00"),
+            shipping_height=Decimal("2.00"),
+        )
+        digital = Product.objects.create(name="Digital", price=Decimal("5.00"), digital=True)
+        OrderItem.objects.create(order=order, product=physical, quantity=2)
+        OrderItem.objects.create(order=order, product=digital, quantity=1)
+        OrderItem.objects.create(order=order, product=None, quantity=1)
+
+        self.assertEqual(order_parcels(order), [
+            {
+                "length": "10.00",
+                "width": "8.00",
+                "height": "2.00",
+                "distance_unit": "in",
+                "weight": "1.25",
+                "mass_unit": "lb",
+            },
+        ] * 2)
+
+    def test_order_parcels_rejects_missing_dimensions_and_invalid_quantity(self):
+        customer = Customer.objects.create()
+        order = Order.objects.create(customer=customer)
+        product = Product.objects.create(name="Unpacked", price=Decimal("10.00"))
+        item = OrderItem.objects.create(order=order, product=product, quantity=1)
+
+        with self.assertRaisesMessage(InvalidParcelError, "Shipping weight and dimensions are required for Unpacked."):
+            order_parcels(order)
+
+        product.shipping_weight = Decimal("1.00")
+        product.shipping_length = Decimal("1.00")
+        product.shipping_width = Decimal("1.00")
+        product.shipping_height = Decimal("1.00")
+        product.save()
+        item.quantity = 0
+        item.save()
+        with self.assertRaisesMessage(InvalidParcelError, "A valid quantity is required for Unpacked."):
+            order_parcels(order)
 
 
 class StoreModelTests(TestCase):
@@ -690,6 +974,152 @@ class StoreViewTests(TestCase):
         self.assertEqual(order.status, Order.STATUS_DELIVERED)
         track.assert_called_once_with("USPS", "TEST123")
 
+    def test_digital_order_gets_a_zero_cost_shipping_rate(self):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer)
+        digital_product = Product.objects.create(
+            name="E-book",
+            price=Decimal("8.00"),
+            digital=True,
+        )
+        OrderItem.objects.create(order=order, product=digital_product, quantity=1)
+
+        response = self.client.post(
+            reverse("shipping_rates"),
+            data=json.dumps({}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["rates"][0]["object_id"], "no_shipping_required")
+        self.assertEqual(response.json()["rates"][0]["amount"], "0.00")
+        shipping = ShippingModel.objects.get(order=order)
+        self.assertEqual(shipping.parcel_manifest, [])
+        self.assertEqual(shipping.shippo_shipment_id, "")
+
+    def test_shipping_rates_rejects_invalid_json_empty_cart_and_invalid_parcels(self):
+        self.client.force_login(self.user)
+        empty_cart = self.client.post(
+            reverse("shipping_rates"),
+            data="[]",
+            content_type="application/json",
+        )
+        self.assertEqual(empty_cart.status_code, 400)
+        self.assertEqual(empty_cart.json()["error"], "Invalid shipping address.")
+
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer)
+        empty_body = self.client.post(
+            reverse("shipping_rates"),
+            data=json.dumps({}),
+            content_type="application/json",
+        )
+        self.assertEqual(empty_body.status_code, 400)
+        self.assertEqual(empty_body.json()["error"], "Your cart is empty.")
+
+        unpacked = Product.objects.create(name="Unpacked", price=Decimal("10.00"))
+        OrderItem.objects.create(order=order, product=unpacked, quantity=1)
+        invalid_parcel = self.client.post(
+            reverse("shipping_rates"),
+            data=json.dumps({
+                "name": "Shopper",
+                "address": "1 Main Street",
+                "city": "Springfield",
+                "state": "IL",
+                "zipcode": "62701",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(invalid_parcel.status_code, 400)
+        self.assertIn("Shipping weight and dimensions are required", invalid_parcel.json()["error"])
+
+    @override_settings(SHIPPO_API_TOKEN="shippo_test_token", SHIPPO_TEST_MODE=True)
+    @patch("store.views.ShippoClient.create_shipment", side_effect=ShippoError("Shippo unavailable."))
+    def test_shipping_rate_provider_errors_return_bad_gateway(self, create_shipment):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer)
+        OrderItem.objects.create(order=order, product=self.bag, quantity=1)
+
+        response = self.client.post(
+            reverse("shipping_rates"),
+            data=json.dumps({
+                "name": "Shopper",
+                "address": "1 Main Street",
+                "city": "Springfield",
+                "state": "IL",
+                "zipcode": "62701",
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"], "Shippo unavailable.")
+        create_shipment.assert_called_once()
+
+    @override_settings(SHIPPO_API_TOKEN="shippo_test_token", SHIPPO_TEST_MODE=True)
+    @patch("store.views.ShippoClient.create_transaction")
+    def test_staff_can_purchase_shipping_label_and_existing_label_is_reused(
+        self, create_transaction
+    ):
+        staff_user = User.objects.create_superuser(
+            username="shipping-admin",
+            email="shipping-admin@example.com",
+            password="test-password",
+        )
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer, complete=True)
+        shipping = ShippingModel.objects.create(
+            customer=customer,
+            order=order,
+            selected_rate_id="rate_test",
+        )
+        create_transaction.return_value = {
+            "status": "SUCCESS",
+            "tracking_number": "TRACK123",
+            "tracking_url_provider": "https://tracking.example/123",
+            "label_url": "https://labels.example/123.pdf",
+            "provider": "USPS",
+        }
+        self.client.force_login(staff_user)
+        url = reverse("purchase_shipping_label", args=[order.pk])
+
+        response = self.client.post(url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["tracking_number"], "TRACK123")
+        shipping.refresh_from_db()
+        self.assertEqual(shipping.label_url, "https://labels.example/123.pdf")
+        create_transaction.assert_called_once_with("rate_test")
+
+        create_transaction.reset_mock()
+        reused_response = self.client.post(url)
+        self.assertEqual(reused_response.status_code, 200)
+        self.assertEqual(reused_response.json()["label_url"], "https://labels.example/123.pdf")
+        create_transaction.assert_not_called()
+
+    def test_shipping_label_requires_staff_and_a_selected_rate(self):
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer, complete=True)
+        self.client.force_login(self.user)
+
+        denied = self.client.post(reverse("purchase_shipping_label", args=[order.pk]))
+        self.assertEqual(denied.status_code, 302)
+
+        staff_user = User.objects.create_superuser(
+            username="shipping-staff",
+            email="shipping-staff@example.com",
+            password="test-password",
+        )
+        self.client.force_login(staff_user)
+        no_rate = self.client.post(reverse("purchase_shipping_label", args=[order.pk]))
+        self.assertEqual(no_rate.status_code, 400)
+        self.assertEqual(
+            no_rate.json()["error"],
+            "No purchased shipping rate is available for this order.",
+        )
+
 
 class AuthenticationAndAccountTests(TestCase):
     def setUp(self):
@@ -798,3 +1228,55 @@ class AdminTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Admin Test Product")
+
+    @patch.object(OrderAdmin, "message_user")
+    @patch("store.admin.ShippoClient.create_transaction")
+    def test_order_admin_creates_labels_and_reports_provider_errors(
+        self, create_transaction, message_user
+    ):
+        customer = Customer.objects.create()
+        failed_order = Order.objects.create(customer=customer, complete=True)
+        failed_shipping = ShippingModel.objects.create(
+            customer=customer,
+            order=failed_order,
+            selected_rate_id="rate_failed",
+        )
+        completed_order = Order.objects.create(customer=customer, complete=True)
+        completed_shipping = ShippingModel.objects.create(
+            customer=customer,
+            order=completed_order,
+            selected_rate_id="rate_success",
+        )
+        labeled_order = Order.objects.create(customer=customer, complete=True)
+        ShippingModel.objects.create(
+            customer=customer,
+            order=labeled_order,
+            selected_rate_id="rate_existing",
+            label_url="https://labels.example/existing.pdf",
+        )
+        Order.objects.create(customer=customer, complete=False)
+        create_transaction.side_effect = [
+            ShippoError("Rate rejected."),
+            {
+                "tracking_number": "TRACK456",
+                "tracking_url_provider": "https://tracking.example/456",
+                "label_url": "https://labels.example/456.pdf",
+                "provider": "UPS",
+            },
+        ]
+        order_admin = admin.site._registry[Order]
+
+        order_admin.create_shippo_labels(
+            SimpleNamespace(),
+            Order.objects.all(),
+        )
+
+        failed_shipping.refresh_from_db()
+        completed_shipping.refresh_from_db()
+        self.assertEqual(failed_shipping.label_url, "")
+        self.assertEqual(completed_shipping.label_url, "https://labels.example/456.pdf")
+        self.assertEqual(completed_shipping.tracking_number, "TRACK456")
+        self.assertEqual(create_transaction.call_count, 2)
+        self.assertEqual(message_user.call_count, 2)
+        self.assertIn("Rate rejected.", message_user.call_args_list[0].args[1])
+        self.assertIn("Created 1 Shippo label(s).", message_user.call_args_list[1].args[1])
