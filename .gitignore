@@ -2,3 +2,7 @@ db.sqlite3
 **__pycache__/
 .vscode
 .env
+.coverage
+htmlcov/
+.venv/
+static/images/products
