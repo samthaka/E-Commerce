@@ -7,6 +7,7 @@ urlpatterns = [
     path('checkout/', views.checkout, name="checkout"),
     path('updateitem/', views.updateItem, name="updateitem"),
     path('process_order/', views.processOrder, name="processOrder"),
+    path('payments/create-intent/', views.create_payment_intent, name="create_payment_intent"),
     path('shipping/rates/', views.shipping_rates, name="shipping_rates"),
     path('search/', views.search, name='search'),  # Store page with search functionality
     path('accounts/profile/', views.account_profile, name='account_profile'),

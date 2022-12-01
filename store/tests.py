@@ -8,6 +8,8 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from unittest.mock import patch
 
+import stripe
+
 from .admin import OrderAdmin, ProductAdmin
 from .forms import SearchForm
 from .models import Customer, Order, OrderItem, Product, ReturnShipment, ShippingModel
@@ -396,6 +398,20 @@ class StoreViewTests(TestCase):
             shippo_shipment_id="shipment_test",
         )
 
+    def payment_intent(self, order, amount, rate_id="rate_test", status="succeeded"):
+        return SimpleNamespace(
+            id="pi_test_payment",
+            status=status,
+            amount=amount,
+            amount_received=amount,
+            currency="usd",
+            metadata=stripe.StripeObject.construct_from({
+                "order_id": str(order.pk),
+                "user_id": str(self.user.pk),
+                "rate_id": rate_id,
+            }, None),
+        )
+
     def test_store_lists_products_and_categories_for_anonymous_user(self):
         response = self.client.get(reverse("store"))
 
@@ -604,6 +620,10 @@ class StoreViewTests(TestCase):
         self.assertFalse(Customer.objects.exists())
         self.assertFalse(OrderItem.objects.exists())
 
+    @override_settings(
+        STRIPE_SECRET_KEY="sk_test_example",
+        STRIPE_PUBLISHABLE_KEY="pk_test_example",
+    )
     def test_authenticated_order_creates_shipping_and_completes_order(self):
         self.client.force_login(self.user)
         customer = Customer.objects.create(user=self.user)
@@ -623,11 +643,16 @@ class StoreViewTests(TestCase):
             },
         }
 
-        response = self.client.post(
-            reverse("processOrder"),
-            data=json.dumps(payload),
-            content_type="application/json",
-        )
+        payload["payment_intent_id"] = "pi_test_payment"
+        with patch("store.views.StripeClient") as stripe_client:
+            stripe_client.return_value.v1.payment_intents.retrieve.return_value = (
+                self.payment_intent(order, 2750)
+            )
+            response = self.client.post(
+                reverse("processOrder"),
+                data=json.dumps(payload),
+                content_type="application/json",
+            )
 
         order.refresh_from_db()
         self.assertEqual(response.status_code, 200)
@@ -640,6 +665,10 @@ class StoreViewTests(TestCase):
         self.assertEqual(shipping.selected_rate_id, "rate_test")
         self.assertEqual(order.get_order_total, Decimal("27.50"))
 
+    @override_settings(
+        STRIPE_SECRET_KEY="sk_test_example",
+        STRIPE_PUBLISHABLE_KEY="pk_test_example",
+    )
     def test_order_total_comparison_preserves_decimal_cents(self):
         self.client.force_login(self.user)
         customer = Customer.objects.create(user=self.user)
@@ -657,15 +686,89 @@ class StoreViewTests(TestCase):
             },
         }
 
-        response = self.client.post(
-            reverse("processOrder"),
-            data=json.dumps(payload),
-            content_type="application/json",
-        )
+        payload["payment_intent_id"] = "pi_test_payment"
+        with patch("store.views.StripeClient") as stripe_client:
+            stripe_client.return_value.v1.payment_intents.retrieve.return_value = (
+                self.payment_intent(order, 10, rate_id="no_shipping_required")
+            )
+            response = self.client.post(
+                reverse("processOrder"),
+                data=json.dumps(payload),
+                content_type="application/json",
+            )
 
         order.refresh_from_db()
         self.assertEqual(response.status_code, 200)
         self.assertTrue(order.complete)
+
+    @override_settings(
+        STRIPE_SECRET_KEY="sk_test_example",
+        STRIPE_PUBLISHABLE_KEY="pk_test_example",
+    )
+    def test_payment_intent_uses_server_calculated_order_total(self):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer)
+        OrderItem.objects.create(order=order, product=self.bag, quantity=2)
+        self.add_shipping_quote(order)
+        intent = SimpleNamespace(
+            id="pi_test_payment",
+            client_secret="pi_test_payment_secret",
+        )
+
+        with patch("store.views.StripeClient") as stripe_client:
+            stripe_client.return_value.v1.payment_intents.create.return_value = intent
+            response = self.client.post(
+                reverse("create_payment_intent"),
+                data=json.dumps({
+                    "shipping": {
+                        "rate_id": "rate_test",
+                        "name": "Shopper",
+                        "address": "1 Main Street",
+                        "city": "Springfield",
+                        "state": "IL",
+                        "zipcode": "62701",
+                        "email": "shopper@example.com",
+                    },
+                }),
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["amount"], 2750)
+        self.assertEqual(response.json()["client_secret"], "pi_test_payment_secret")
+        self.assertEqual(response.json()["publishable_key"], "pk_test_example")
+        stripe_client.return_value.v1.payment_intents.create.assert_called_once()
+        params = stripe_client.return_value.v1.payment_intents.create.call_args.kwargs["params"]
+        self.assertEqual(params["amount"], 2750)
+        self.assertEqual(params["currency"], "usd")
+        self.assertEqual(params["metadata"]["order_id"], str(order.pk))
+
+    @override_settings(
+        STRIPE_SECRET_KEY="sk_test_example",
+        STRIPE_PUBLISHABLE_KEY="pk_test_example",
+    )
+    def test_unpaid_or_wrong_amount_payment_intent_cannot_complete_order(self):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer)
+        OrderItem.objects.create(order=order, product=self.bag, quantity=1)
+        self.add_shipping_quote(order)
+
+        with patch("store.views.StripeClient") as stripe_client:
+            stripe_client.return_value.v1.payment_intents.retrieve.side_effect = [
+                self.payment_intent(order, 0, status="requires_payment_method"),
+                self.payment_intent(order, 1250),
+            ]
+            for _ in range(2):
+                response = self.client.post(
+                    reverse("processOrder"),
+                    data=json.dumps({"payment_intent_id": "pi_test_payment"}),
+                    content_type="application/json",
+                )
+                self.assertEqual(response.status_code, 400)
+                order.refresh_from_db()
+                self.assertFalse(order.complete)
 
     def test_anonymous_order_is_rejected_without_creating_records(self):
         payload = {
