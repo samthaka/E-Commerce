@@ -100,18 +100,20 @@
                     </div>
                     {% endif %}
                     <div id="shipping-error" class="checkout-error hidden" role="alert"></div>
-                    <button type="submit" id="form-button" class="checkout-secondary-button">
-                        {% if requires_shipping %}Get delivery options{% else %}Continue to payment{% endif %}
-                    </button>
-                </form>
+                    <div class="delivery-options-anchor">
+                        <button type="submit" id="form-button" class="checkout-secondary-button">
+                            {% if requires_shipping %}Get delivery options{% else %}Continue to payment{% endif %}
+                        </button>
 
-                <div id="shipping-rates" class="shipping-rates hidden">
-                    <div class="checkout-subheading">
-                        <h3>Delivery options</h3>
-                        <span>Choose one to continue</span>
+                        <div id="shipping-rates" class="shipping-rates hidden">
+                            <div class="checkout-subheading">
+                                <h3>Delivery options</h3>
+                                <span>Choose one to continue</span>
+                            </div>
+                            <div id="rate-options" class="rate-options"></div>
+                        </div>
                     </div>
-                    <div id="rate-options" class="rate-options"></div>
-                </div>
+                </form>
             </section>
 
             <section class="checkout-card checkout-payment hidden" id="payment-info" aria-labelledby="payment-heading">

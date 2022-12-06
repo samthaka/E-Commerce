@@ -1,57 +1,114 @@
 {% extends 'store/main.html' %}
 {% block content %}
 
-<h1>My Orders</h1>
+<div class="order-history-page">
+    <header class="orders-heading">
+        <div>
+            <p class="orders-eyebrow">YOUR ACCOUNT</p>
+            <h1>My orders</h1>
+            <p>Order details, delivery updates, and returns—all in one place.</p>
+        </div>
+    </header>
 
-{% for section in sections %}
-<section class="box-element" aria-labelledby="orders-{{ forloop.counter }}">
-    <h2 id="orders-{{ forloop.counter }}">{{ section.label }}</h2>
-    {% for order in section.orders %}
-    <article class="order-history-entry">
-        <h3>Order #{{ order.id }} - {{ order.date_ordered|date:"M j, Y" }}</h3>
-        <ul>
-            {% for item in order.orderitem_set.all %}
-            <li>{{ item.product.name }} x{{ item.quantity }} - ${{ item.get_total|floatformat:2 }}</li>
-            {% endfor %}
-        </ul>
-        <p>Total including shipping: ${{ order.get_order_total|floatformat:2 }}</p>
-        {% for shipment in order.shippingmodel_set.all %}
-        <section class="shipping-details" data-order-id="{{ order.id }}">
-            <h4>Shipping</h4>
-            <p>{{ shipment.carrier }} {{ shipment.service_level }}</p>
-            <p>Shipping cost: ${{ shipment.shipping_cost|floatformat:2 }}</p>
-            {% if shipment.tracking_number %}
-            <p>Tracking: <a href="{{ shipment.tracking_url }}" target="_blank" rel="noopener">{{ shipment.tracking_number }}</a></p>
-            <p>Status: <span class="tracking-status">{{ shipment.tracking_status|default:"Label created" }}</span>
-                <span class="tracking-details">{{ shipment.tracking_status_details }}</span></p>
-            <button type="button" class="btn btn-outline-dark refresh-tracking">Refresh tracking</button>
-            {% endif %}
-            <div class="return-shipment-controls">
-                <button type="button" class="btn btn-outline-dark prepare-return">Prepare a return</button>
-                <div class="return-rates"></div>
-                {% for return_shipment in shipment.returns.all %}
-                <div class="return-shipment" data-return-id="{{ return_shipment.id }}">
-                    <p>Return {{ return_shipment.carrier }} {{ return_shipment.service_level }}</p>
-                    {% if return_shipment.label_url %}
-                    <p><a href="{{ return_shipment.label_url }}" rel="noopener">Download return label</a></p>
-                    {% endif %}
-                    {% if return_shipment.tracking_number %}
-                    <p>Tracking: <a href="{{ return_shipment.tracking_url }}" target="_blank" rel="noopener">{{ return_shipment.tracking_number }}</a></p>
-                    <p>Status: <span class="tracking-status">{{ return_shipment.tracking_status|default:"Label created" }}</span>
-                        <span class="tracking-details">{{ return_shipment.tracking_status_details }}</span></p>
-                    <button type="button" class="btn btn-outline-dark refresh-tracking" data-return-id="{{ return_shipment.id }}">Refresh return tracking</button>
-                    {% endif %}
-                </div>
-                {% endfor %}
+    {% for section in sections %}
+    <section class="order-status-section" aria-labelledby="orders-{{ forloop.counter }}">
+        <div class="orders-section-heading">
+            <div>
+                <p class="orders-section-eyebrow">ORDER STATUS</p>
+                <h2 id="orders-{{ forloop.counter }}">{{ section.label }}</h2>
             </div>
-        </section>
+            <span class="orders-count">{{ section.orders|length }} order{{ section.orders|length|pluralize }}</span>
+        </div>
+        {% for order in section.orders %}
+        <article class="order-history-entry">
+            <header class="order-card-header">
+                <div>
+                    <p class="order-reference">ORDER #{{ order.id }}</p>
+                    <h3>Placed {{ order.date_ordered|date:"M j, Y" }}</h3>
+                </div>
+                <div class="order-total">
+                    <span>Order total</span>
+                    <strong>${{ order.get_order_total|floatformat:2 }}</strong>
+                </div>
+            </header>
+            <ul class="order-item-list">
+                {% for item in order.orderitem_set.all %}
+                <li>
+                    <span class="order-item-name">{{ item.product.name }}</span>
+                    <span class="order-item-quantity">Qty {{ item.quantity }}</span>
+                    <strong>${{ item.get_total|floatformat:2 }}</strong>
+                </li>
+                {% endfor %}
+            </ul>
+            {% for shipment in order.shippingmodel_set.all %}
+            <section class="shipping-details" data-order-id="{{ order.id }}" aria-label="Shipping details for order {{ order.id }}">
+                <div class="shipping-card-heading">
+                    <div>
+                        <p class="orders-section-eyebrow">DELIVERY</p>
+                        <h4>{{ shipment.carrier }} {{ shipment.service_level }}</h4>
+                    </div>
+                    <span class="shipping-cost">${{ shipment.shipping_cost|floatformat:2 }}</span>
+                </div>
+                {% if shipment.tracking_number %}
+                <div class="tracking-panel">
+                    <div class="tracking-summary">
+                        <span class="tracking-indicator" aria-hidden="true"></span>
+                        <div>
+                            <span class="tracking-label">Tracking status</span>
+                            <strong class="tracking-status">{{ shipment.tracking_status|default:"Label created" }}</strong>
+                            <span class="tracking-details">{{ shipment.tracking_status_details }}</span>
+                        </div>
+                    </div>
+                    <div class="tracking-actions">
+                        <a class="tracking-number" href="{{ shipment.tracking_url }}" target="_blank" rel="noopener">
+                            Track {{ shipment.tracking_number }}
+                        </a>
+                        <button type="button" class="btn btn-outline-dark order-action-button refresh-tracking">Refresh tracking</button>
+                    </div>
+                </div>
+                {% endif %}
+                <div class="return-shipment-controls">
+                    <button type="button" class="btn btn-outline-dark order-action-button prepare-return">Prepare a return</button>
+                    <div class="return-rates"></div>
+                    {% for return_shipment in shipment.returns.all %}
+                    <div class="return-shipment" data-return-id="{{ return_shipment.id }}">
+                        <div class="return-shipment-heading">
+                            <strong>Return shipment</strong>
+                            <span>{{ return_shipment.carrier }} {{ return_shipment.service_level }}</span>
+                        </div>
+                        {% if return_shipment.label_url %}
+                        <a class="return-label-link" href="{{ return_shipment.label_url }}" rel="noopener">Download return label</a>
+                        {% endif %}
+                        {% if return_shipment.tracking_number %}
+                        <div class="tracking-panel return-tracking-panel">
+                            <div class="tracking-summary">
+                                <span class="tracking-indicator" aria-hidden="true"></span>
+                                <div>
+                                    <span class="tracking-label">Return tracking status</span>
+                                    <strong class="tracking-status">{{ return_shipment.tracking_status|default:"Label created" }}</strong>
+                                    <span class="tracking-details">{{ return_shipment.tracking_status_details }}</span>
+                                </div>
+                            </div>
+                            <div class="tracking-actions">
+                                <a class="tracking-number" href="{{ return_shipment.tracking_url }}" target="_blank" rel="noopener">
+                                    Track {{ return_shipment.tracking_number }}
+                                </a>
+                                <button type="button" class="btn btn-outline-dark order-action-button refresh-tracking" data-return-id="{{ return_shipment.id }}">Refresh return tracking</button>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </section>
+            {% endfor %}
+        </article>
+        {% empty %}
+        <p class="orders-empty-state">No {{ section.label|lower }} orders yet.</p>
         {% endfor %}
-    </article>
-    {% empty %}
-    <p>No {{ section.label|lower }} orders yet.</p>
+    </section>
     {% endfor %}
-</section>
-{% endfor %}
+</div>
 
 <script>
     async function postOrderJson(url, payload) {
@@ -132,7 +189,7 @@
                     `/orders/${section.dataset.orderId}/tracking/`,
                     button.dataset.returnId ? {return_id: button.dataset.returnId} : {}
                 );
-                const container = button.parentElement;
+                const container = button.closest('.tracking-panel');
                 container.querySelector('.tracking-status').textContent = data.status;
                 container.querySelector('.tracking-details').textContent = data.details;
             } catch (error) {
