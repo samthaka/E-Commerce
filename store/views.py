@@ -402,6 +402,7 @@ def processOrder(req):
     with transaction.atomic():
         order.transaction_id = payment_intent.id
         order.complete = True
+        order.status = Order.STATUS_PENDING
         order.save()
         details["shipping"].selected_rate_id = details["selected_rate_id"]
         details["shipping"].shipping_cost = details["shipping_cost"]
@@ -409,7 +410,28 @@ def processOrder(req):
         details["shipping"].service_level = details["selected_rate"].get("servicelevel", "")
         details["shipping"].save()
 
-    return JsonResponse('Order placed.', safe=False)
+    return JsonResponse({"message": "Order placed.", "order_id": order.pk})
+
+
+@login_required
+@require_POST
+def mark_order_delivered(req):
+    data = _json_data(req) or {}
+    order_id = data.get("order_id")
+    if not isinstance(order_id, int):
+        try:
+            order_id = int(order_id)
+        except (TypeError, ValueError):
+            return _json_error("Order not found.", 404)
+
+    customer = Customer.objects.filter(user=req.user).first()
+    order = Order.objects.filter(pk=order_id, customer=customer, complete=True, status=Order.STATUS_PENDING).first()
+    if order is None:
+        return _json_error("Order not found.", 404)
+
+    order.status = Order.STATUS_DELIVERED
+    order.save(update_fields=["status"])
+    return JsonResponse({"status": order.status, "order_id": order.pk})
 
 
 @login_required
@@ -539,6 +561,46 @@ def order_history(req):
         'categories': Product.objects.values_list('category', flat=True).distinct(),
     }
     return render(req, 'store/order_history.html', context)
+
+
+@login_required
+@require_POST
+def submit_review(req):
+    product_id = req.POST.get('product_id')
+    order_id = req.POST.get('order_id')
+    rating = req.POST.get('rating')
+    message = (req.POST.get('message') or '').strip()
+    customer = Customer.objects.filter(user=req.user).first()
+    if not customer or not product_id or not order_id or not rating:
+        return redirect('order_history')
+
+    try:
+        rating_value = int(rating)
+    except (TypeError, ValueError):
+        return redirect('order_history')
+    if not 1 <= rating_value <= 5:
+        return redirect('order_history')
+
+    order = Order.objects.filter(
+        pk=order_id,
+        customer=customer,
+        complete=True,
+        status=Order.STATUS_DELIVERED,
+    ).first()
+    product = Product.objects.filter(pk=product_id).first()
+    if order is None or product is None:
+        return redirect('order_history')
+
+    ProductReview.objects.update_or_create(
+        product=product,
+        customer=customer,
+        order=order,
+        defaults={
+            'rating': rating_value,
+            'message': message[:1000],
+        },
+    )
+    return redirect('order_history')
 
 
 @login_required

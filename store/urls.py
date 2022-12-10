@@ -12,6 +12,8 @@ urlpatterns = [
     path('search/', views.search, name='search'),  # Store page with search functionality
     path('accounts/profile/', views.account_profile, name='account_profile'),
     path('orders/', views.order_history, name='order_history'),
+    path('orders/mark-delivered/', views.mark_order_delivered, name='mark_order_delivered'),
+    path('orders/review/', views.submit_review, name='submit_review'),
     path('orders/<int:order_id>/return/rates/', views.create_return_rates, name='return_rates'),
     path(
         'orders/<int:order_id>/return/<int:return_id>/label/',

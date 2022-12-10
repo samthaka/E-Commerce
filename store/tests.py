@@ -12,7 +12,7 @@ import stripe
 
 from .admin import OrderAdmin, ProductAdmin
 from .forms import SearchForm
-from .models import Customer, Order, OrderItem, Product, ReturnShipment, ShippingModel
+from .models import Customer, Order, OrderItem, Product, ProductReview, ReturnShipment, ShippingModel
 from .shippo import (
     InvalidParcelError,
     ShippoClient,
@@ -346,6 +346,20 @@ class StoreModelTests(TestCase):
         self.assertEqual(str(shipping), "1 Main Street")
         self.assertEqual(str(self.order), "None")
         self.assertEqual(self.order.status, Order.STATUS_PENDING)
+
+    def test_product_review_summary_and_latest_review(self):
+        review = ProductReview.objects.create(
+            product=self.product,
+            customer=self.customer,
+            order=self.order,
+            rating=5,
+            message="A great find.",
+        )
+
+        self.assertEqual(self.product.average_rating, 5.0)
+        self.assertEqual(self.product.review_count, 1)
+        self.assertEqual(self.product.latest_review, review)
+        self.assertEqual(self.product.latest_review.rating, 5)
 
 
 class StoreViewTests(TestCase):

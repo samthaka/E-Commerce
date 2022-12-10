@@ -60,6 +60,21 @@ class Product(models.Model):
             url = ''
         return url
 
+    @property
+    def average_rating(self):
+        reviews = self.reviews.all()
+        if not reviews.exists():
+            return 0
+        return round(sum(review.rating for review in reviews) / reviews.count(), 1)
+
+    @property
+    def review_count(self):
+        return self.reviews.count()
+
+    @property
+    def latest_review(self):
+        return self.reviews.order_by('-created_at').first()
+
 
 class Order(models.Model):
     STATUS_PENDING = "pending"
@@ -115,7 +130,34 @@ class OrderItem(models.Model):
     def get_total(self):
         total = self.product.price * self.quantity
         return total
-    
+
+    @property
+    def review(self):
+        if not self.order or not self.product or not self.order.customer:
+            return None
+        return self.product.reviews.filter(order=self.order, customer=self.order.customer).order_by('-created_at').first()
+
+
+class ProductReview(models.Model):
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='reviews')
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='product_reviews')
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='product_reviews')
+    rating = models.PositiveSmallIntegerField(default=5)
+    message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['product', 'customer', 'order'],
+                name='unique_product_review_per_customer_order',
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.customer} rated {self.product} {self.rating}/5"
+
 
 class ShippingModel(models.Model):
     customer = models.ForeignKey(Customer, on_delete=models.SET_NULL, blank=True, null=True)

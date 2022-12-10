@@ -1,6 +1,23 @@
 {% extends 'store/main.html' %}
 {% block content %}
 
+<style>
+    .hidden { display: none !important; }
+    .order-item-row { display: flex; flex-direction: column; gap: 12px; }
+    .order-item-main { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .review-form { display: flex; flex-direction: column; gap: 10px; max-width: 420px; }
+    .review-stars { display: flex; gap: 8px; }
+    .review-stars label { position: relative; cursor: pointer; }
+    .review-stars input { position: absolute; opacity: 0; }
+    .review-stars span { font-size: 1.5rem; color: #f4c542; }
+    .review-stars input:checked + span,
+    .review-stars input:hover + span { filter: brightness(1.1); }
+    .product-price-block { display: flex; align-items: center; gap: 8px; }
+    .product-rating { color: #f0ad4e; font-weight: 600; }
+    .product-rating.empty { color: #6c757d; font-weight: 500; }
+    .product-review-summary { display: block; margin-top: 12px; font-size: 0.9rem; }
+</style>
+
 <div class="order-history-page">
     <header class="orders-heading">
         <div>
@@ -33,10 +50,37 @@
             </header>
             <ul class="order-item-list">
                 {% for item in order.orderitem_set.all %}
-                <li>
-                    <span class="order-item-name">{{ item.product.name }}</span>
-                    <span class="order-item-quantity">Qty {{ item.quantity }}</span>
-                    <strong>${{ item.get_total|floatformat:2 }}</strong>
+                <li class="order-item-row">
+                    <div class="order-item-main">
+                        <span class="order-item-name">{{ item.product.name }}</span>
+                        <span class="order-item-quantity">Qty {{ item.quantity }}</span>
+                        <strong>${{ item.get_total|floatformat:2 }}</strong>
+                    </div>
+                    {% if order.status == 'delivered' %}
+                        {% if item.review %}
+                        <div class="order-item-review">
+                            <strong>{{ item.review.rating }}★</strong>
+                            {% if item.review.message %}<p>{{ item.review.message }}</p>{% endif %}
+                        </div>
+                        {% else %}
+                        <button type="button" class="btn btn-outline-dark review-toggle" data-product-id="{{ item.product.id }}" data-product-name="{{ item.product.name }}">Review item</button>
+                        <form class="review-form hidden" method="post" action="{% url 'submit_review' %}">
+                            {% csrf_token %}
+                            <input type="hidden" name="product_id" value="{{ item.product.id }}">
+                            <input type="hidden" name="order_id" value="{{ order.id }}">
+                            <div class="review-stars" aria-label="Rate {{ item.product.name }}">
+                                {% for star in '12345' %}
+                                <label>
+                                    <input type="radio" name="rating" value="{{ forloop.counter }}" required>
+                                    <span>★</span>
+                                </label>
+                                {% endfor %}
+                            </div>
+                            <textarea name="message" rows="2" placeholder="Optional review message"></textarea>
+                            <button type="submit" class="btn btn-dark review-submit">Submit review</button>
+                        </form>
+                        {% endif %}
+                    {% endif %}
                 </li>
                 {% endfor %}
             </ul>
@@ -177,6 +221,15 @@
                 ratesBox.textContent = error.message;
                 prepareButton.disabled = false;
             }
+        });
+    });
+
+    document.querySelectorAll('.review-toggle').forEach((button) => {
+        button.addEventListener('click', () => {
+            const form = button.nextElementSibling;
+            if (!form) return;
+            form.classList.toggle('hidden');
+            button.textContent = form.classList.contains('hidden') ? 'Review item' : 'Cancel';
         });
     });
 

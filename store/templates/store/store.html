@@ -38,9 +38,24 @@
         <div class="product">
             <p id="product-description-{{ product.id }}" class="product-description" hidden>
                 {{ product.description }}
+                {% if product.latest_review %}
+                <span class="product-review-summary">
+                    <strong>{{ product.latest_review.rating }}★</strong>
+                    {% if product.latest_review.message %}
+                    <span>{{ product.latest_review.message }}</span>
+                    {% endif %}
+                </span>
+                {% endif %}
             </p>
             <div class="product-card-footer">
-                <strong class="product-price">${{ product.price|floatformat:2 }}</strong>
+                <div class="product-price-block">
+                    <strong class="product-price">${{ product.price|floatformat:2 }}</strong>
+                    {% if product.review_count %}
+                    <span class="product-rating">★ {{ product.average_rating|floatformat:1 }}</span>
+                    {% else %}
+                    <span class="product-rating empty">No reviews</span>
+                    {% endif %}
+                </div>
                 <button data-product="{{ product.id }}" data-action="add"
                     class="btn add-btn update-cart product-add-button">Add to cart</button>
             </div>
