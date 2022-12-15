@@ -2279,6 +2279,47 @@ ul li {
   white-space: nowrap;
 }
 
+.product-price-block {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.product-rating,
+.product-rating-stars {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.product-rating {
+  color: #66746d;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.product-rating-stars {
+  color: #d5d9d5;
+  font-size: 13px;
+  letter-spacing: 1px;
+}
+
+.product-rating-stars .is-filled {
+  color: #f0ad4e;
+}
+
+.product-rating.empty {
+  color: #6c757d;
+  font-weight: 500;
+}
+
+.product-review-summary {
+  display: block;
+  margin-top: 12px;
+  font-size: 0.9rem;
+}
+
 .product-add-button,
 .product-add-button:hover {
   min-height: 34px;

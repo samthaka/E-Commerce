@@ -360,6 +360,43 @@ class StoreModelTests(TestCase):
         self.assertEqual(self.product.review_count, 1)
         self.assertEqual(self.product.latest_review, review)
         self.assertEqual(self.product.latest_review.rating, 5)
+        self.assertEqual(str(review), "Test Customer rated Canvas Bag 5/5")
+
+    def test_empty_reviews_order_shipping_and_item_review_defaults(self):
+        self.assertEqual(self.product.average_rating, 0)
+        self.assertEqual(self.product.review_count, 0)
+        self.assertIsNone(self.product.latest_review)
+        self.assertEqual(self.order.get_shipping_total, Decimal("0.00"))
+        self.assertEqual(self.order.get_order_total, Decimal("0.00"))
+
+        item = OrderItem.objects.create(order=self.order, product=self.product, quantity=1)
+        self.assertIsNone(item.review)
+
+        shipping = ShippingModel.objects.create(
+            customer=self.customer,
+            order=self.order,
+            address="1 Main Street",
+            shipping_cost=Decimal("2.50"),
+        )
+        self.assertEqual(self.order.get_shipping_total, Decimal("2.50"))
+        self.assertEqual(self.order.get_order_total, Decimal("15.00"))
+        self.assertEqual(str(ReturnShipment.objects.create(shipping=shipping)), f"Return for order {self.order.pk}")
+
+    def test_order_item_review_requires_customer_and_returns_matching_review(self):
+        item = OrderItem.objects.create(order=self.order, product=self.product, quantity=1)
+        self.order.customer = None
+        self.order.save()
+        self.assertIsNone(item.review)
+
+        self.order.customer = self.customer
+        self.order.save()
+        review = ProductReview.objects.create(
+            product=self.product,
+            customer=self.customer,
+            order=self.order,
+            rating=4,
+        )
+        self.assertEqual(item.review, review)
 
 
 class StoreViewTests(TestCase):
@@ -528,6 +565,38 @@ class StoreViewTests(TestCase):
         self.assertContains(response, 'value="Chicago"')
         self.assertContains(response, 'data-address="1 Old Street"')
         self.assertNotContains(response, 'data-address="2 New Street"')
+
+    def test_checkout_deduplicates_saved_addresses_and_marks_digital_orders(self):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        for address in ("1 Main Street", " 1 MAIN STREET ", "2 Other Street"):
+            previous_order = Order.objects.create(customer=customer, complete=True)
+            ShippingModel.objects.create(
+                customer=customer,
+                order=previous_order,
+                address=address,
+                city="Springfield",
+                state="IL",
+                zipcode="62701",
+            )
+        order = Order.objects.create(customer=customer)
+        ebook = Product.objects.create(
+            name="E-book",
+            price=Decimal("8.00"),
+            digital=True,
+        )
+        OrderItem.objects.create(order=order, product=ebook, quantity=1)
+
+        response = self.client.get(reverse("checkout"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context["requires_shipping"])
+        self.assertEqual(response.context["latest_shipping"].address, "2 Other Street")
+        self.assertEqual(
+            [address.address for address in response.context["saved_addresses"]],
+            [" 1 MAIN STREET "],
+        )
+        self.assertContains(response, "No shipping required")
 
     def test_search_filters_by_product_name_and_category(self):
         name_response = self.client.get(reverse("search"), {"query": "canvas"})
@@ -950,6 +1019,7 @@ class StoreViewTests(TestCase):
             {"1.00"},
         )
 
+    @override_settings(STRIPE_SECRET_KEY="sk_test_example")
     def test_order_cannot_use_stale_shipping_quote_after_cart_changes(self):
         self.client.force_login(self.user)
         customer = Customer.objects.create(user=self.user)
@@ -958,27 +1028,22 @@ class StoreViewTests(TestCase):
         self.add_shipping_quote(order)
         OrderItem.objects.filter(order=order, product=self.bag).update(quantity=2)
 
-        response = self.client.post(
-            reverse("processOrder"),
-            data=json.dumps({
-                "form": {"total": "15.00"},
-                "shipping": {
-                    "rate_id": "rate_test",
-                    "name": "Shopper",
-                    "address": "1 Main Street",
-                    "city": "Springfield",
-                    "state": "IL",
-                    "zipcode": "62701",
-                    "email": "shopper@example.com",
-                },
-            }),
-            content_type="application/json",
-        )
+        with patch("store.views.StripeClient") as stripe_client:
+            stripe_client.return_value.v1.payment_intents.retrieve.return_value = (
+                self.payment_intent(order, 1500)
+            )
+            response = self.client.post(
+                reverse("processOrder"),
+                data=json.dumps({"payment_intent_id": "pi_test_payment"}),
+                content_type="application/json",
+            )
 
         order.refresh_from_db()
         self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "Your cart changed. Please request a new shipping quote.")
         self.assertFalse(order.complete)
 
+    @override_settings(STRIPE_SECRET_KEY="sk_test_example")
     def test_order_cannot_use_quote_after_shipping_address_changes(self):
         self.client.force_login(self.user)
         customer = Customer.objects.create(user=self.user)
@@ -993,19 +1058,25 @@ class StoreViewTests(TestCase):
             "state": "IL",
             "zipcode": "62701",
             "email": "shopper@example.com",
+            "payment_intent_id": "pi_test_payment",
         }
 
-        response = self.client.post(
-            reverse("processOrder"),
-            data=json.dumps({
-                "form": {"total": "15.00"},
-                "shipping": changed_address,
-            }),
-            content_type="application/json",
-        )
+        with patch("store.views.StripeClient") as stripe_client:
+            stripe_client.return_value.v1.payment_intents.retrieve.return_value = (
+                self.payment_intent(order, 1500)
+            )
+            response = self.client.post(
+                reverse("processOrder"),
+                data=json.dumps({"shipping": changed_address, "payment_intent_id": "pi_test_payment"}),
+                content_type="application/json",
+            )
 
         order.refresh_from_db()
         self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json()["error"],
+            "Your shipping address changed. Please request new rates.",
+        )
         self.assertFalse(order.complete)
 
     @override_settings(SHIPPO_API_TOKEN="shippo_test_token", SHIPPO_TEST_MODE=True)
@@ -1237,6 +1308,612 @@ class StoreViewTests(TestCase):
             "No purchased shipping rate is available for this order.",
         )
 
+    def test_checkout_rejects_incomplete_addresses_and_unknown_rates(self):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer)
+        OrderItem.objects.create(order=order, product=self.bag, quantity=1)
+        self.add_shipping_quote(order)
+        url = reverse("create_payment_intent")
+        headers = {"content_type": "application/json"}
+
+        responses = (
+            self.client.post(url, data="{", **headers),
+            self.client.post(url, data=json.dumps([]), **headers),
+            self.client.post(url, data=json.dumps({}), **headers),
+            self.client.post(url, data=json.dumps({"shipping": None}), **headers),
+            self.client.post(url, data=json.dumps({"shipping": {
+                "rate_id": "rate_test",
+                "name": "",
+                "address": "1 Main Street",
+                "city": "Springfield",
+                "state": "IL",
+                "zipcode": "62701",
+            }}), **headers),
+            self.client.post(url, data=json.dumps({"shipping": {
+                "rate_id": "rate_test",
+                "name": "Shopper",
+                "address": "1 Main Street",
+                "city": "Springfield",
+                "state": "XX",
+                "zipcode": "62701",
+            }}), **headers),
+            self.client.post(url, data=json.dumps({"shipping": {
+                "rate_id": "rate_test",
+                "name": "Shopper",
+                "address": "1 Main Street",
+                "city": "Springfield",
+                "state": "IL",
+                "zipcode": "123",
+            }}), **headers),
+            self.client.post(url, data=json.dumps({"shipping": {
+                "rate_id": "unknown_rate",
+                "name": "Shopper",
+                "address": "1 Main Street",
+                "city": "Springfield",
+                "state": "IL",
+                "zipcode": "62701",
+            }}), **headers),
+        )
+
+        self.assertEqual([response.status_code for response in responses], [400] * 8)
+        self.assertEqual(responses[0].json()["error"], "Invalid order data.")
+        self.assertEqual(responses[4].json()["error"], "Enter a street address, city, state, and ZIP code.")
+        self.assertEqual(responses[5].json()["error"], "Choose a valid US state.")
+        self.assertEqual(responses[6].json()["error"], "Enter a valid US ZIP code.")
+        self.assertEqual(responses[7].json()["error"], "Choose a valid shipping rate.")
+
+    def test_checkout_requires_an_order_and_shipping_quote(self):
+        self.client.force_login(self.user)
+        url = reverse("create_payment_intent")
+        payload = json.dumps({"shipping": {"rate_id": "rate_test"}})
+
+        empty = self.client.post(url, data=payload, content_type="application/json")
+        self.assertEqual(empty.status_code, 400)
+        self.assertEqual(empty.json()["error"], "Cannot checkout with an empty cart.")
+
+        customer = Customer.objects.get(user=self.user)
+        order = Order.objects.create(customer=customer)
+        OrderItem.objects.create(order=order, product=self.bag, quantity=1)
+        missing_quote = self.client.post(url, data=payload, content_type="application/json")
+        self.assertEqual(missing_quote.status_code, 400)
+        self.assertEqual(
+            missing_quote.json()["error"],
+            "Get a shipping quote before placing this order.",
+        )
+
+    @override_settings(STRIPE_PUBLISHABLE_KEY="", STRIPE_SECRET_KEY="")
+    def test_payment_intent_reports_missing_stripe_configuration(self):
+        self.client.force_login(self.user)
+        url = reverse("create_payment_intent")
+
+        unavailable = self.client.post(url, data="{}", content_type="application/json")
+        self.assertEqual(unavailable.status_code, 503)
+        self.assertEqual(unavailable.json()["error"], "Stripe is not configured.")
+
+    @override_settings(
+        STRIPE_PUBLISHABLE_KEY="pk_test_example",
+        STRIPE_SECRET_KEY="",
+    )
+    def test_payment_intent_reports_missing_secret_key(self):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer)
+        OrderItem.objects.create(order=order, product=self.bag, quantity=1)
+        self.add_shipping_quote(order)
+        payload = {
+            "shipping": {
+                "rate_id": "rate_test",
+                "name": "Shopper",
+                "address": "1 Main Street",
+                "city": "Springfield",
+                "state": "IL",
+                "zipcode": "62701",
+            },
+        }
+
+        response = self.client.post(
+            reverse("create_payment_intent"),
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"], "Stripe is not configured.")
+
+    @override_settings(
+        STRIPE_PUBLISHABLE_KEY="pk_test_example",
+        STRIPE_SECRET_KEY="sk_test_example",
+    )
+    def test_checkout_details_rejects_malformed_shipping_after_validation(self):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer)
+        OrderItem.objects.create(order=order, product=self.bag, quantity=1)
+        self.add_shipping_quote(order)
+
+        with patch("store.views._shipping_address_error", return_value=None):
+            response = self.client.post(
+                reverse("create_payment_intent"),
+                data=json.dumps({"shipping": {
+                    "rate_id": "rate_test",
+                    "name": [],
+                    "address": "1 Main Street",
+                    "city": "Springfield",
+                    "state": "IL",
+                    "zipcode": "62701",
+                }}),
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json()["error"],
+            "Order details are incomplete or the cart has changed.",
+        )
+
+    @override_settings(
+        STRIPE_PUBLISHABLE_KEY="pk_test_example",
+        STRIPE_SECRET_KEY="sk_test_example",
+    )
+    def test_payment_intent_translates_stripe_provider_errors(self):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer)
+        OrderItem.objects.create(order=order, product=self.bag, quantity=1)
+        self.add_shipping_quote(order)
+        payload = json.dumps({"shipping": {
+            "rate_id": "rate_test",
+            "name": "Shopper",
+            "address": "1 Main Street",
+            "city": "Springfield",
+            "state": "IL",
+            "zipcode": "62701",
+        }})
+
+        with patch("store.views.StripeClient") as stripe_client:
+            stripe_client.return_value.v1.payment_intents.create.side_effect = ValueError("bad config")
+            config_error = self.client.post(
+                reverse("create_payment_intent"),
+                data=payload,
+                content_type="application/json",
+            )
+            stripe_client.return_value.v1.payment_intents.create.side_effect = stripe.StripeError(
+                "provider failure"
+            )
+            provider_error = self.client.post(
+                reverse("create_payment_intent"),
+                data=payload,
+                content_type="application/json",
+            )
+
+        self.assertEqual(config_error.status_code, 503)
+        self.assertEqual(config_error.json()["error"], "bad config")
+        self.assertEqual(provider_error.status_code, 502)
+        self.assertEqual(
+            provider_error.json()["error"],
+            "Payment service is unavailable. Please try again.",
+        )
+
+    @override_settings(STRIPE_SECRET_KEY="sk_test_example")
+    def test_process_order_rejects_invalid_ids_and_stripe_errors(self):
+        self.client.force_login(self.user)
+        url = reverse("processOrder")
+
+        invalid_json = self.client.post(url, data="{", content_type="application/json")
+        invalid_id = self.client.post(
+            url,
+            data=json.dumps({"payment_intent_id": "invalid"}),
+            content_type="application/json",
+        )
+        self.assertEqual(invalid_json.status_code, 400)
+        self.assertEqual(invalid_json.json()["error"], "Invalid order data.")
+        self.assertEqual(invalid_id.status_code, 400)
+        self.assertEqual(
+            invalid_id.json()["error"],
+            "A valid payment is required to place this order.",
+        )
+
+        with patch("store.views.StripeClient") as stripe_client:
+            stripe_client.return_value.v1.payment_intents.retrieve.side_effect = ValueError(
+                "bad config"
+            )
+            config_error = self.client.post(
+                url,
+                data=json.dumps({"payment_intent_id": "pi_test"}),
+                content_type="application/json",
+            )
+            stripe_client.return_value.v1.payment_intents.retrieve.side_effect = stripe.StripeError(
+                "provider failure"
+            )
+            provider_error = self.client.post(
+                url,
+                data=json.dumps({"payment_intent_id": "pi_test"}),
+                content_type="application/json",
+            )
+
+        self.assertEqual(config_error.status_code, 503)
+        self.assertEqual(config_error.json()["error"], "bad config")
+        self.assertEqual(provider_error.status_code, 502)
+
+    @override_settings(STRIPE_SECRET_KEY="sk_test_example")
+    def test_process_order_uses_saved_address_and_validates_payment_metadata(self):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer)
+        OrderItem.objects.create(order=order, product=self.bag, quantity=1)
+        self.add_shipping_quote(order)
+        url = reverse("processOrder")
+
+        with patch("store.views.StripeClient") as stripe_client:
+            retrieve = stripe_client.return_value.v1.payment_intents.retrieve
+            retrieve.return_value = self.payment_intent(order, 1500)
+            response = self.client.post(
+                url,
+                data=json.dumps({"payment_intent_id": "pi_test_payment"}),
+                content_type="application/json",
+            )
+            self.assertEqual(response.status_code, 200)
+
+            order.complete = False
+            order.save()
+            for changes in (
+                {"user_id": "another-user"},
+                {"amount_received": 0},
+                {"currency": "eur"},
+                {"order_id": "another-order"},
+            ):
+                intent = self.payment_intent(order, 1500)
+                for name, value in changes.items():
+                    if name in ("user_id", "order_id"):
+                        setattr(intent.metadata, name, value)
+                    else:
+                        setattr(intent, name, value)
+                retrieve.return_value = intent
+                rejected = self.client.post(
+                    url,
+                    data=json.dumps({"payment_intent_id": "pi_test_payment"}),
+                    content_type="application/json",
+                )
+                self.assertEqual(rejected.status_code, 400)
+                self.assertEqual(
+                    rejected.json()["error"],
+                    "Payment does not match this order."
+                    if "user_id" in changes
+                    else "Payment is incomplete or does not match this order.",
+                )
+
+        order.refresh_from_db()
+        self.assertFalse(order.complete)
+
+    @override_settings(STRIPE_SECRET_KEY="sk_test_example")
+    def test_process_order_without_shipping_quote_returns_a_validation_error(self):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer)
+        OrderItem.objects.create(order=order, product=self.bag, quantity=1)
+
+        with patch("store.views.StripeClient") as stripe_client:
+            stripe_client.return_value.v1.payment_intents.retrieve.return_value = (
+                self.payment_intent(order, 1500)
+            )
+            response = self.client.post(
+                reverse("processOrder"),
+                data=json.dumps({"payment_intent_id": "pi_test_payment"}),
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json()["error"],
+            "Get a shipping quote before placing this order.",
+        )
+
+    def test_mark_order_delivered_requires_a_pending_completed_order(self):
+        self.client.force_login(self.user)
+        url = reverse("mark_order_delivered")
+
+        invalid_id = self.client.post(
+            url,
+            data=json.dumps({"order_id": "not-an-id"}),
+            content_type="application/json",
+        )
+        missing_order = self.client.post(
+            url,
+            data=json.dumps({"order_id": 12345}),
+            content_type="application/json",
+        )
+        self.assertEqual(invalid_id.status_code, 404)
+        self.assertEqual(missing_order.status_code, 404)
+
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer, complete=True)
+        delivered = self.client.post(
+            url,
+            data=json.dumps({"order_id": str(order.pk)}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(delivered.status_code, 200)
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.STATUS_DELIVERED)
+
+    def test_customers_can_submit_and_update_reviews_for_delivered_orders(self):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(
+            customer=customer,
+            complete=True,
+            status=Order.STATUS_DELIVERED,
+        )
+        url = reverse("submit_review")
+        invalid_values = (
+            {},
+            {"product_id": self.bag.pk, "order_id": order.pk, "rating": "invalid"},
+            {"product_id": self.bag.pk, "order_id": order.pk, "rating": "6"},
+            {"product_id": 9999, "order_id": order.pk, "rating": "5"},
+        )
+        for values in invalid_values:
+            response = self.client.post(url, data=values)
+            self.assertEqual(response.status_code, 302)
+            self.assertFalse(ProductReview.objects.exists())
+
+        response = self.client.post(url, data={
+            "product_id": self.bag.pk,
+            "order_id": order.pk,
+            "rating": "4",
+            "message": "  Great bag.  ",
+        })
+        review = ProductReview.objects.get(product=self.bag, order=order)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(review.message, "Great bag.")
+
+        self.client.post(url, data={
+            "product_id": self.bag.pk,
+            "order_id": order.pk,
+            "rating": "5",
+            "message": "x" * 1100,
+        })
+        review.refresh_from_db()
+        self.assertEqual(review.rating, 5)
+        self.assertEqual(len(review.message), 1000)
+
+    @override_settings(SHIPPO_API_TOKEN="shippo_test_token", SHIPPO_TEST_MODE=True)
+    @patch("store.views.ShippoClient.create_shipment")
+    def test_return_rate_errors_and_messages_are_reported(self, create_shipment):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        missing = self.client.post(reverse("return_rates", args=[9999]), data="{}",
+                                   content_type="application/json")
+        self.assertEqual(missing.status_code, 404)
+
+        digital_order = Order.objects.create(customer=customer, complete=True)
+        digital = Product.objects.create(name="E-book", price=Decimal("8.00"), digital=True)
+        OrderItem.objects.create(order=digital_order, product=digital, quantity=1)
+        digital_shipping = self.add_shipping_quote(digital_order)
+        no_physical_return = self.client.post(
+            reverse("return_rates", args=[digital_order.pk]),
+            data="{}",
+            content_type="application/json",
+        )
+        self.assertEqual(no_physical_return.status_code, 400)
+        self.assertEqual(
+            no_physical_return.json()["error"],
+            "Digital orders do not need a return shipment.",
+        )
+        self.assertIsNotNone(digital_shipping)
+
+        order_without_shipping = Order.objects.create(customer=customer, complete=True)
+        OrderItem.objects.create(order=order_without_shipping, product=self.bag, quantity=1)
+        no_address = self.client.post(
+            reverse("return_rates", args=[order_without_shipping.pk]),
+            data="{}",
+            content_type="application/json",
+        )
+        self.assertEqual(no_address.status_code, 400)
+
+        order = Order.objects.create(customer=customer, complete=True)
+        OrderItem.objects.create(order=order, product=self.bag, quantity=1)
+        self.add_shipping_quote(order)
+        url = reverse("return_rates", args=[order.pk])
+        create_shipment.return_value = {"rates": [], "messages": " Carrier is unavailable. "}
+        with self.assertLogs("store.views", level="WARNING") as logged:
+            no_rates = self.client.post(url, data="{}", content_type="application/json")
+        self.assertEqual(no_rates.status_code, 422)
+        self.assertIn("Carrier is unavailable.", logged.output[0])
+
+        create_shipment.return_value = {"rates": []}
+        with self.assertLogs("store.views", level="WARNING") as logged:
+            no_details = self.client.post(url, data="{}", content_type="application/json")
+        self.assertEqual(no_details.status_code, 422)
+        self.assertIn("Shippo did not return any return-shipping rates.", logged.output[0])
+
+    @override_settings(SHIPPO_API_TOKEN="shippo_test_token", SHIPPO_TEST_MODE=True)
+    @patch("store.views.ShippoClient.create_shipment")
+    def test_return_rates_translate_parcel_and_provider_errors(self, create_shipment):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer, complete=True)
+        unpacked = Product.objects.create(name="Unpacked", price=Decimal("10.00"))
+        OrderItem.objects.create(order=order, product=unpacked, quantity=1)
+        shipping = ShippingModel.objects.create(customer=customer, order=order, address="1 Main Street")
+
+        invalid_parcel = self.client.post(
+            reverse("return_rates", args=[order.pk]),
+            data="{}",
+            content_type="application/json",
+        )
+        self.assertEqual(invalid_parcel.status_code, 400)
+        self.assertIn("Shipping weight and dimensions are required", invalid_parcel.json()["error"])
+        create_shipment.assert_not_called()
+
+        unpacked.shipping_weight = Decimal("1.00")
+        unpacked.shipping_length = Decimal("1.00")
+        unpacked.shipping_width = Decimal("1.00")
+        unpacked.shipping_height = Decimal("1.00")
+        unpacked.save()
+        create_shipment.side_effect = ShippoError("Return rates unavailable.")
+        provider_error = self.client.post(
+            reverse("return_rates", args=[order.pk]),
+            data="{}",
+            content_type="application/json",
+        )
+        self.assertEqual(provider_error.status_code, 502)
+        self.assertEqual(provider_error.json()["error"], "Return rates unavailable.")
+        self.assertIsNotNone(shipping)
+
+    @override_settings(SHIPPO_API_TOKEN="shippo_test_token", SHIPPO_TEST_MODE=True)
+    def test_return_label_validation_errors_and_existing_labels(self):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer, complete=True)
+        shipping = self.add_shipping_quote(order)
+        return_shipment = ReturnShipment.objects.create(
+            shipping=shipping,
+            rates=[{
+                "object_id": "return_rate",
+                "amount": "3.25",
+                "provider": "USPS",
+                "servicelevel": "Ground",
+            }],
+        )
+        url = reverse("purchase_return_label", args=[order.pk, return_shipment.pk])
+
+        unknown = self.client.post(
+            reverse("purchase_return_label", args=[order.pk, 9999]),
+            data=json.dumps({"rate_id": "return_rate"}),
+            content_type="application/json",
+        )
+        no_rate = self.client.post(url, data="[]", content_type="application/json")
+        self.assertEqual(unknown.status_code, 404)
+        self.assertEqual(no_rate.status_code, 400)
+
+        return_shipment.selected_rate_id = "return_rate"
+        return_shipment.tracking_number = "TRACK123"
+        return_shipment.label_url = "https://labels.example/return.pdf"
+        return_shipment.tracking_url = "https://tracking.example/return"
+        return_shipment.save()
+        with patch("store.views.ShippoClient.create_transaction") as create_transaction:
+            reused = self.client.post(
+                url,
+                data=json.dumps({"rate_id": "return_rate"}),
+                content_type="application/json",
+            )
+        self.assertEqual(reused.status_code, 200)
+        self.assertEqual(reused.json()["tracking_number"], "TRACK123")
+        create_transaction.assert_not_called()
+
+    @override_settings(SHIPPO_API_TOKEN="shippo_test_token", SHIPPO_TEST_MODE=True)
+    @patch("store.views.ShippoClient.create_transaction", side_effect=ShippoError("Label unavailable."))
+    def test_return_label_translates_provider_errors(self, create_transaction):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer, complete=True)
+        shipping = self.add_shipping_quote(order)
+        return_shipment = ReturnShipment.objects.create(
+            shipping=shipping,
+            rates=[{"object_id": "return_rate", "amount": "3.25"}],
+        )
+
+        response = self.client.post(
+            reverse("purchase_return_label", args=[order.pk, return_shipment.pk]),
+            data=json.dumps({"rate_id": "return_rate"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"], "Label unavailable.")
+        create_transaction.assert_called_once_with("return_rate")
+
+    @override_settings(SHIPPO_API_TOKEN="shippo_test_token", SHIPPO_TEST_MODE=True)
+    @patch("store.views.ShippoClient.create_transaction", side_effect=ShippoError("Label unavailable."))
+    def test_shipping_label_translates_provider_errors(self, create_transaction):
+        staff_user = User.objects.create_superuser(
+            username="shipping-error-admin",
+            email="shipping-error-admin@example.com",
+            password="pass",
+        )
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer, complete=True)
+        ShippingModel.objects.create(
+            customer=customer,
+            order=order,
+            selected_rate_id="rate_test",
+        )
+        self.client.force_login(staff_user)
+
+        response = self.client.post(reverse("purchase_shipping_label", args=[order.pk]))
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"], "Label unavailable.")
+        create_transaction.assert_called_once_with("rate_test")
+
+    @override_settings(SHIPPO_API_TOKEN="shippo_test_token", SHIPPO_TEST_MODE=True)
+    @patch("store.views.ShippoClient.track")
+    def test_tracking_rejects_missing_shipments_and_handles_provider_errors(self, track):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        missing = self.client.post(
+            reverse("refresh_tracking", args=[9999]),
+            data="{}",
+            content_type="application/json",
+        )
+        self.assertEqual(missing.status_code, 404)
+
+        order = Order.objects.create(customer=customer, complete=True)
+        shipping = self.add_shipping_quote(order)
+        missing_return = self.client.post(
+            reverse("refresh_tracking", args=[order.pk]),
+            data=json.dumps({"return_id": 12345}),
+            content_type="application/json",
+        )
+        self.assertEqual(missing_return.status_code, 404)
+
+        unavailable = self.client.post(
+            reverse("refresh_tracking", args=[order.pk]),
+            data="[]",
+            content_type="application/json",
+        )
+        self.assertEqual(unavailable.status_code, 400)
+
+        shipping.carrier = "USPS"
+        shipping.tracking_number = "TRACK123"
+        shipping.save()
+        track.side_effect = ShippoError("Tracking unavailable.")
+        failed = self.client.post(
+            reverse("refresh_tracking", args=[order.pk]),
+            data="{}",
+            content_type="application/json",
+        )
+        self.assertEqual(failed.status_code, 502)
+        self.assertEqual(failed.json()["error"], "Tracking unavailable.")
+
+    @override_settings(SHIPPO_API_TOKEN="shippo_test_token", SHIPPO_TEST_MODE=True)
+    @patch("store.views.ShippoClient.track", return_value={})
+    def test_return_tracking_refresh_preserves_existing_status(self, track):
+        self.client.force_login(self.user)
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer, complete=True)
+        shipping = self.add_shipping_quote(order)
+        return_shipment = ReturnShipment.objects.create(
+            shipping=shipping,
+            carrier="USPS",
+            tracking_number="RETURN123",
+            tracking_status="TRANSIT",
+            tracking_status_details="In transit",
+        )
+
+        response = self.client.post(
+            reverse("refresh_tracking", args=[order.pk]),
+            data=json.dumps({"return_id": return_shipment.pk}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "TRANSIT")
+        self.assertEqual(response.json()["details"], "In transit")
+        track.assert_called_once_with("USPS", "RETURN123")
+
 
 class AuthenticationAndAccountTests(TestCase):
     def setUp(self):
@@ -1397,3 +2074,14 @@ class AdminTests(TestCase):
         self.assertEqual(message_user.call_count, 2)
         self.assertIn("Rate rejected.", message_user.call_args_list[0].args[1])
         self.assertIn("Created 1 Shippo label(s).", message_user.call_args_list[1].args[1])
+
+    @patch.object(OrderAdmin, "message_user")
+    def test_order_admin_does_not_report_success_when_no_labels_are_created(self, message_user):
+        Order.objects.create(complete=False)
+
+        admin.site._registry[Order].create_shippo_labels(
+            SimpleNamespace(),
+            Order.objects.all(),
+        )
+
+        message_user.assert_not_called()

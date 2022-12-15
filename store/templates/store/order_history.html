@@ -9,13 +9,9 @@
     .review-stars { display: flex; gap: 8px; }
     .review-stars label { position: relative; cursor: pointer; }
     .review-stars input { position: absolute; opacity: 0; }
-    .review-stars span { font-size: 1.5rem; color: #f4c542; }
-    .review-stars input:checked + span,
-    .review-stars input:hover + span { filter: brightness(1.1); }
-    .product-price-block { display: flex; align-items: center; gap: 8px; }
-    .product-rating { color: #f0ad4e; font-weight: 600; }
-    .product-rating.empty { color: #6c757d; font-weight: 500; }
-    .product-review-summary { display: block; margin-top: 12px; font-size: 0.9rem; }
+    .review-stars span { color: #d5d9d5; font-size: 1.5rem; }
+    .review-stars span.is-active { color: #f4c542; }
+    .review-stars input:focus-visible + span { outline: 2px solid #285b4a; outline-offset: 2px; }
 </style>
 
 <div class="order-history-page">
@@ -58,20 +54,22 @@
                     </div>
                     {% if order.status == 'delivered' %}
                         {% if item.review %}
-                        <div class="order-item-review">
-                            <strong>{{ item.review.rating }}★</strong>
-                            {% if item.review.message %}<p>{{ item.review.message }}</p>{% endif %}
-                        </div>
+                            {% if item.review.message %}
+                            <div class="order-item-review">
+                                <p>{{ item.review.message }}</p>
+                            </div>
+                            {% endif %}
                         {% else %}
                         <button type="button" class="btn btn-outline-dark review-toggle" data-product-id="{{ item.product.id }}" data-product-name="{{ item.product.name }}">Review item</button>
                         <form class="review-form hidden" method="post" action="{% url 'submit_review' %}">
                             {% csrf_token %}
                             <input type="hidden" name="product_id" value="{{ item.product.id }}">
                             <input type="hidden" name="order_id" value="{{ order.id }}">
-                            <div class="review-stars" aria-label="Rate {{ item.product.name }}">
+                            <div class="review-stars" role="group" aria-label="Rate {{ item.product.name }}">
                                 {% for star in '12345' %}
                                 <label>
-                                    <input type="radio" name="rating" value="{{ forloop.counter }}" required>
+                                    <input type="radio" name="rating" value="{{ forloop.counter }}"
+                                        aria-label="{{ forloop.counter }} star{{ forloop.counter|pluralize }}" required>
                                     <span>★</span>
                                 </label>
                                 {% endfor %}
@@ -231,6 +229,32 @@
             form.classList.toggle('hidden');
             button.textContent = form.classList.contains('hidden') ? 'Review item' : 'Cancel';
         });
+    });
+
+    document.querySelectorAll('.review-stars').forEach((ratingGroup) => {
+        const inputs = ratingGroup.querySelectorAll('input[name="rating"]');
+        const setActiveStars = (rating) => {
+            ratingGroup.querySelectorAll('label').forEach((label, index) => {
+                label.querySelector('span').classList.toggle('is-active', index < rating);
+            });
+        };
+        const restoreSelection = () => {
+            const selected = ratingGroup.querySelector('input[name="rating"]:checked');
+            setActiveStars(selected ? Number(selected.value) : 0);
+        };
+
+        inputs.forEach((input) => {
+            input.addEventListener('change', () => setActiveStars(Number(input.value)));
+            input.addEventListener('focus', () => setActiveStars(Number(input.value)));
+            input.addEventListener('blur', restoreSelection);
+            input.addEventListener('click', () => setActiveStars(Number(input.value)));
+        });
+        ratingGroup.querySelectorAll('label').forEach((label) => {
+            label.addEventListener('mouseenter', () => {
+                setActiveStars(Number(label.querySelector('input').value));
+            });
+        });
+        ratingGroup.addEventListener('mouseleave', restoreSelection);
     });
 
     document.querySelectorAll('.refresh-tracking').forEach((button) => {
