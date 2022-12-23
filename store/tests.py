@@ -488,6 +488,16 @@ class StoreViewTests(TestCase):
         self.assertEqual(list(response.context["products"]), [self.watch])
         self.assertEqual(response.context["selected_category"], "Watches")
 
+    def test_category_menu_links_to_store_from_order_history(self):
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse("order_history"))
+
+        self.assertContains(
+            response,
+            f'href="{reverse("store")}?category=Accessories">Accessories</a>',
+        )
+
     def test_authenticated_store_creates_customer_and_open_order(self):
         self.client.force_login(self.user)
 
