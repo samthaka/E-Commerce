@@ -1,0 +1,64 @@
+{% extends "store/main.html" %}
+{% load i18n %}
+
+{% block content %}
+<main class="account-profile-page">
+    <header class="account-profile-heading">
+        <div>
+            <span class="account-profile-eyebrow">YOUR ACCOUNT</span>
+            <h1>Account details</h1>
+            <p>Manage your profile and sign-in preferences.</p>
+        </div>
+        <span class="account-profile-avatar" aria-hidden="true">{{ request.user.get_full_name|default:request.user.username|first|upper }}</span>
+    </header>
+
+    <section class="account-profile-panel" aria-label="Account information">
+        <div class="account-profile-section-title">
+            <h2>Personal information</h2>
+            <a href="{% url 'account_email' %}">Manage email <span aria-hidden="true">&#8599;</span></a>
+        </div>
+        <dl class="account-profile-details">
+            <div>
+                <dt>Name</dt>
+                <dd>{{ request.user.get_full_name|default:request.user.username }}</dd>
+            </div>
+            <div>
+                <dt>Username</dt>
+                <dd>{{ request.user.username }}</dd>
+            </div>
+            <div>
+                <dt>Email address</dt>
+                <dd>{{ request.user.email|default:"No email added" }}</dd>
+            </div>
+            <div>
+                <dt>Account type</dt>
+                <dd>{% if request.user.is_staff %}Staff{% else %}Customer{% endif %}</dd>
+            </div>
+            <div>
+                <dt>Member since</dt>
+                <dd>{{ request.user.date_joined|date:"F j, Y" }}</dd>
+            </div>
+            <div>
+                <dt>Last sign in</dt>
+                <dd>{% if request.user.last_login %}{{ request.user.last_login|date:"F j, Y, P" }}{% else %}This is your first sign in{% endif %}</dd>
+            </div>
+        </dl>
+    </section>
+
+    <section class="account-profile-panel account-security-panel" aria-label="Account settings">
+        <div>
+            <h2>Sign-in & security</h2>
+            <p>Keep your account details up to date.</p>
+        </div>
+        <nav class="account-profile-actions" aria-label="Account actions">
+            <a href="{% url 'account_email' %}"><span>Change email address</span><span aria-hidden="true">&#8594;</span></a>
+            <a href="{% url 'account_change_password' %}"><span>Change password</span><span aria-hidden="true">&#8594;</span></a>
+            <a href="{% url 'socialaccount_connections' %}"><span>Connected accounts</span><span aria-hidden="true">&#8594;</span></a>
+            <form method="post" action="{% url 'account_logout' %}">
+                {% csrf_token %}
+                <button type="submit"><span>Sign out</span><span aria-hidden="true">&#8594;</span></button>
+            </form>
+        </nav>
+    </section>
+</main>
+{% endblock content %}

@@ -15,7 +15,7 @@
         {% endelement %}
     {% else %}
         {% element h1 %}
-            {% blocktrans with provider.name as provider %}{% endblocktrans %}
+            {% blocktrans with provider.name as provider %}Continue with {{ provider }}{% endblocktrans %}
         {% endelement %}
         {% element p %}
             {% blocktrans with provider.name as provider %}You are about to sign in using a third-party account from {{ provider }}.{% endblocktrans %}
