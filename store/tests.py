@@ -1,18 +1,26 @@
+import csv
+import io
 import json
+import zipfile
 from decimal import Decimal
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
 from django.contrib import admin
 from django.contrib.auth.models import User
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import TestCase, override_settings
 from django.urls import reverse
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import stripe
 
 from .admin import OrderAdmin, ProductAdmin
 from .forms import SearchForm
 from .models import Customer, Order, OrderItem, Product, ProductReview, ReturnShipment, ShippingModel
+from .management.commands.import_products import Command
 from .shippo import (
     InvalidParcelError,
     ShippoClient,
@@ -298,6 +306,103 @@ class ShippoClientTests(TestCase):
         item.save()
         with self.assertRaisesMessage(InvalidParcelError, "A valid quantity is required for Unpacked."):
             order_parcels(order)
+
+
+class ProductImportCommandTests(TestCase):
+    def test_downloads_products_archive_from_google_drive(self):
+        archive_bytes = io.BytesIO()
+        with zipfile.ZipFile(archive_bytes, "w") as archive:
+            archive.writestr("products.csv", "id,name\n1,Test\n")
+
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.iter_content.return_value = [archive_bytes.getvalue()]
+
+        with TemporaryDirectory() as temp_dir:
+            archive_path = Path(temp_dir) / "products.zip"
+            with patch(
+                "store.management.commands.import_products.requests.get",
+                return_value=response,
+            ) as get:
+                Command()._download_products_archive(archive_path)
+
+            get.assert_called_once()
+            self.assertEqual(
+                get.call_args.kwargs["params"]["id"],
+                "1OGwCSCrk877KSqZCbyST9YSd2jrOfYYq",
+            )
+            self.assertTrue(zipfile.is_zipfile(archive_path))
+
+    def test_extracts_wrapped_products_archive_into_csv_directory(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            archive_path = root / "products.zip"
+            csv_path = root / "products" / "products.csv"
+            csv_path.parent.mkdir()
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("sample_10k/products.csv", "id,name\n1,Test\n")
+                archive.writestr("sample_10k/images/1.jpg", "image")
+
+            Command()._extract_products_archive(archive_path, csv_path)
+
+            self.assertEqual(csv_path.read_text(), "id,name\n1,Test\n")
+            self.assertEqual((csv_path.parent / "images" / "1.jpg").read_text(), "image")
+
+    def test_rejects_archive_paths_that_escape_extraction_directory(self):
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            archive_path = root / "products.zip"
+            csv_path = root / "products" / "products.csv"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("../outside.txt", "unsafe")
+
+            with self.assertRaisesMessage(CommandError, "Unsafe path"):
+                Command()._extract_products_archive(archive_path, csv_path)
+            self.assertFalse((root / "outside.txt").exists())
+
+    def test_import_references_images_in_media_root_without_copying(self):
+        columns = [
+            "id", "name", "price", "digital", "image", "description",
+            "master_category", "sub_category", "article_type", "gender",
+            "base_colour", "season", "year", "usage",
+            "shipping_weight", "shipping_length", "shipping_width", "shipping_height",
+            "is_synthetic",
+        ]
+        row = {
+            "id": "42",
+            "name": "Test product",
+            "price": "12.50",
+            "digital": "false",
+            "master_category": "Clothing",
+            "sub_category": "Tops",
+            "article_type": "Shirt",
+        }
+
+        with TemporaryDirectory() as temp_dir:
+            media_root = Path(temp_dir)
+            images_dir = media_root / "images"
+            images_dir.mkdir()
+            (images_dir / "42.jpg").write_bytes(b"test image")
+            csv_path = media_root / "products.csv"
+            with csv_path.open("w", newline="", encoding="utf-8") as csv_file:
+                writer = csv.DictWriter(csv_file, fieldnames=columns)
+                writer.writeheader()
+                writer.writerow(row)
+
+            Product.objects.create(
+                name="Test product",
+                price=Decimal("12.50"),
+                source_id=42,
+                image="products/42.jpg",
+            )
+            with override_settings(MEDIA_ROOT=media_root):
+                call_command("import_products", str(csv_path))
+
+            product = Product.objects.get(source_id=42)
+            self.assertEqual(product.image.name, "images/42.jpg")
+            self.assertTrue((media_root / product.image.name).is_file())
+            self.assertFalse((media_root / "products" / "42.jpg").exists())
+            self.assertEqual(Product.objects.filter(source_id=42).count(), 1)
 
 
 class StoreModelTests(TestCase):

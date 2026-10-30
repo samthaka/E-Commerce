@@ -13,7 +13,60 @@ class Customer(models.Model):
         return self.name or (f"Customer {self.pk}" if self.pk else "Customer")
 
 
+class Category(models.Model):
+    """Three-level tree: master category > sub category > article type.
+    Products attach to the leaf (article type)."""
+
+    name = models.CharField(max_length=100)
+    slug = models.SlugField(max_length=160, unique=True)  # full path, e.g. "apparel-topwear-shirts"
+    parent = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="children",
+    )
+
+    class Meta:
+        verbose_name_plural = "categories"
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["parent", "name"], name="unique_category_name_per_parent"
+            ),
+        ]
+
+    def __str__(self):
+        return self.full_path
+
+    @property
+    def full_path(self):
+        parts, node = [], self
+        while node:
+            parts.append(node.name)
+            node = node.parent
+        return " > ".join(reversed(parts))
+
+    def descendant_ids(self):
+        """This category's id plus all descendant ids (use for 'all products under X')."""
+        ids, frontier = [self.pk], [self.pk]
+        while frontier:
+            frontier = list(
+                Category.objects.filter(parent_id__in=frontier).values_list("pk", flat=True)
+            )
+            ids.extend(frontier)
+        return ids
+
+
 class Product(models.Model):
+    GENDER_CHOICES = [
+        ("Men", "Men"),
+        ("Women", "Women"),
+        ("Unisex", "Unisex"),
+        ("Boys", "Boys"),
+        ("Girls", "Girls"),
+    ]
+
     name = models.CharField(max_length=200, null=True)
     price = models.DecimalField(max_digits=7, decimal_places=2)
     digital = models.BooleanField(default=False, null=True, blank=False)
@@ -45,19 +98,50 @@ class Product(models.Model):
         blank=True,
         help_text="Packed height in inches, required for physical products.",
     )
-    image = models.ImageField(null=True,blank=True)
+    image = models.ImageField(null=True, blank=True)    
     description = models.TextField(null=True)
-    category = models.CharField(max_length=200, null=True)
+    category = models.ForeignKey(
+        Category,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="products",
+    )
+
+    # Attributes from the Myntra dataset
+    gender = models.CharField(max_length=10, choices=GENDER_CHOICES, blank=True)
+    base_colour = models.CharField(max_length=50, blank=True)
+    season = models.CharField(max_length=20, blank=True)
+    year = models.PositiveSmallIntegerField(null=True, blank=True)
+    usage = models.CharField(max_length=30, blank=True)
+
+    # Import bookkeeping
+    source_id = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        unique=True,
+        help_text="ID from the Kaggle/Myntra dataset; lets the import be re-run safely.",
+    )
+    is_synthetic = models.BooleanField(
+        default=False,
+        help_text="Price, description and shipping data were generated, not real.",
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["gender"]),
+            models.Index(fields=["base_colour"]),
+        ]
 
     def __str__(self):
-        return self.name
+        return self.name or f"Product {self.pk}"
 
     @property
     def imageURL(self):
         try:
             url = self.image.url
-        except:
-            url = ''
+        except ValueError:
+            url = ""
         return url
 
     @property
@@ -73,7 +157,7 @@ class Product(models.Model):
 
     @property
     def latest_review(self):
-        return self.reviews.order_by('-created_at').first()
+        return self.reviews.order_by("-created_at").first()
 
 
 class Order(models.Model):
