@@ -64,7 +64,7 @@
                         <li><a class="dropdown-item" href="{% url 'order_history' %}">My orders</a></li>
                         <li class="menu-label">Categories</li>
                         {% for category in categories %}
-                            <li><a class="dropdown-item" href="{% url 'store' %}?category={{ category|urlencode }}">{{ category|capfirst }}</a></li>
+                            <li><a class="dropdown-item" href="{% url 'store' %}?category={{ category.slug|urlencode }}">{{ category.full_path }}</a></li>
                         {% endfor %}
                         <li class="menu-label">Need a hand?</li>
                         <li><a class="dropdown-item" href="#">Contact us</a></li>

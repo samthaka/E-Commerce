@@ -429,20 +429,43 @@ class Command(BaseCommand):
         todo = [r for r in rows if int(r["id"]) not in existing_products]
         self.stdout.write(f"{len(existing_products)} already imported, {len(todo)} to import")
 
-        # Refresh image names for existing imports after the media path change.
-        image_updates = []
+        # Refresh category and image references for existing imports.
+        existing_updates = []
+        update_fields = set()
+        category_updates = 0
+        image_updates = 0
         for r in rows:
             product = existing_products.get(int(r["id"]))
+            if not product:
+                continue
+
+            changed = False
+            category = leaves[(r["master_category"], r["sub_category"], r["article_type"])]
+            if product.category_id != category.pk:
+                product.category = category
+                category_updates += 1
+                update_fields.add("category")
+                changed = True
+
             image_file = images_dir / f"{r['id']}.jpg"
-            if product and image_file.is_file():
+            if image_file.is_file():
                 image_name = (image_path_prefix / image_file.name).as_posix()
                 if product.image.name != image_name:
                     product.image = image_name
-                    image_updates.append(product)
-        if image_updates:
+                    image_updates += 1
+                    update_fields.add("image")
+                    changed = True
+
+            if changed:
+                existing_updates.append(product)
+
+        if existing_updates:
             with transaction.atomic():
-                Product.objects.bulk_update(image_updates, ["image"])
-            self.stdout.write(f"Updated {len(image_updates)} existing image references")
+                Product.objects.bulk_update(existing_updates, sorted(update_fields))
+            if category_updates:
+                self.stdout.write(f"Updated {category_updates} existing product categories")
+            if image_updates:
+                self.stdout.write(f"Updated {image_updates} existing image references")
 
         # ---- bulk create products
         bs = opts["batch_size"]

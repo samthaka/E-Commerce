@@ -19,7 +19,7 @@ import stripe
 
 from .admin import OrderAdmin, ProductAdmin
 from .forms import SearchForm
-from .models import Customer, Order, OrderItem, Product, ProductReview, ReturnShipment, ShippingModel
+from .models import Category, Customer, Order, OrderItem, Product, ProductReview, ReturnShipment, ShippingModel
 from .management.commands.import_products import Command
 from .shippo import (
     InvalidParcelError,
@@ -503,6 +503,7 @@ class ProductImportCommandTests(TestCase):
 
             product = Product.objects.get(source_id=42)
             self.assertEqual(product.image.name, "images/42.jpg")
+            self.assertEqual(product.category.full_path, "Clothing > Tops > Shirt")
             self.assertTrue((media_root / product.image.name).is_file())
             self.assertFalse((media_root / "products" / "42.jpg").exists())
             self.assertEqual(Product.objects.filter(source_id=42).count(), 1)
@@ -516,10 +517,11 @@ class StoreModelTests(TestCase):
             name="Test Customer",
             email="customer@example.com",
         )
+        self.category = Category.objects.create(name="Accessories", slug="accessories")
         self.product = Product.objects.create(
             name="Canvas Bag",
             price=Decimal("12.50"),
-            category="Accessories",
+            category=self.category,
         )
         self.order = Order.objects.create(customer=self.customer)
 
@@ -614,10 +616,22 @@ class StoreViewTests(TestCase):
             email="shopper@example.com",
             password="secure-pass",
         )
+        self.accessories = Category.objects.create(name="Accessories", slug="accessories")
+        self.bags = Category.objects.create(
+            name="Bags",
+            slug="accessories-bags",
+            parent=self.accessories,
+        )
+        self.bag_category = Category.objects.create(
+            name="Backpacks",
+            slug="accessories-bags-backpacks",
+            parent=self.bags,
+        )
+        self.watch_category = Category.objects.create(name="Watches", slug="watches")
         self.bag = Product.objects.create(
             name="Canvas Bag",
             price=Decimal("12.50"),
-            category="Accessories",
+            category=self.bag_category,
             shipping_weight=Decimal("1.00"),
             shipping_length=Decimal("12.00"),
             shipping_width=Decimal("10.00"),
@@ -626,7 +640,7 @@ class StoreViewTests(TestCase):
         self.watch = Product.objects.create(
             name="Classic Watch",
             price=Decimal("40.00"),
-            category="Watches",
+            category=self.watch_category,
             shipping_weight=Decimal("0.50"),
             shipping_length=Decimal("8.00"),
             shipping_width=Decimal("6.00"),
@@ -678,7 +692,12 @@ class StoreViewTests(TestCase):
         self.assertTemplateUsed(response, "store/store.html")
         self.assertEqual(set(response.context["products"]), {self.bag, self.watch})
         self.assertEqual(response.context["cartItems"], 0)
-        self.assertCountEqual(response.context["categories"], ["Accessories", "Watches"])
+        self.assertCountEqual(
+            response.context["categories"],
+            [self.bag_category, self.watch_category],
+        )
+        self.assertContains(response, "Accessories &gt; Bags &gt; Backpacks")
+        self.assertContains(response, "?category=accessories-bags-backpacks")
         self.assertFalse(Customer.objects.exists())
         self.assertContains(response, 'class="product-description" hidden')
         self.assertContains(response, "View")
@@ -691,10 +710,13 @@ class StoreViewTests(TestCase):
         self.assertContains(response, f'href="{reverse("order_history")}"')
 
     def test_store_filters_products_by_category(self):
-        response = self.client.get(reverse("store"), {"category": "Watches"})
+        response = self.client.get(
+            reverse("store"),
+            {"category": self.watch_category.slug},
+        )
 
         self.assertEqual(list(response.context["products"]), [self.watch])
-        self.assertEqual(response.context["selected_category"], "Watches")
+        self.assertEqual(response.context["selected_category"], self.watch_category.slug)
 
     def test_category_menu_links_to_store_from_order_history(self):
         self.client.force_login(self.user)
@@ -703,7 +725,8 @@ class StoreViewTests(TestCase):
 
         self.assertContains(
             response,
-            f'href="{reverse("store")}?category=Accessories">Accessories</a>',
+            f'href="{reverse("store")}?category=accessories-bags-backpacks">'
+            "Accessories &gt; Bags &gt; Backpacks</a>",
         )
 
     def test_authenticated_store_creates_customer_and_open_order(self):
@@ -2194,7 +2217,7 @@ class AdminTests(TestCase):
         self.product = Product.objects.create(
             name="Admin Test Product",
             price=Decimal("15.00"),
-            category="Test",
+            category=Category.objects.create(name="Test", slug="test"),
         )
 
     def test_store_models_are_registered_with_admin(self):
