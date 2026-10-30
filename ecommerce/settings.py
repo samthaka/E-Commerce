@@ -141,7 +141,7 @@ STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
 MEDIA_URL = "/images/"
 
-MEDIA_ROOT = os.path.join(BASE_DIR, 'static/images/products')
+MEDIA_ROOT = BASE_DIR / 'products'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 AUTHENTICATION_BACKENDS = (
@@ -156,6 +156,18 @@ EMAIL_USE_SSL = True
 EMAIL_HOST_USER = os.getenv('GMAIL_ADDRESS', '')
 EMAIL_HOST_PASSWORD = os.getenv('GMAIL_APP_PASSWORD', '')
 DEFAULT_FROM_EMAIL = os.getenv('GMAIL_ADDRESS', '')
+
+SHIPPO_API_TOKEN = os.getenv("SHIPPO_API_TOKEN", "")
+SHIPPO_TEST_MODE = os.getenv("SHIPPO_TEST_MODE", "true").lower() == "true"
+SHIPPO_API_URL = os.getenv("SHIPPO_API_URL", "https://api.goshippo.com")
+SHIPPO_FROM_NAME = os.getenv("SHIPPO_FROM_NAME", "E-commerce")
+SHIPPO_FROM_EMAIL = os.getenv("SHIPPO_FROM_EMAIL", "crpas.ke@gmail.com")
+SHIPPO_FROM_STREET = os.getenv("SHIPPO_FROM_STREET", "215 Clayton St")
+SHIPPO_FROM_CITY = os.getenv("SHIPPO_FROM_CITY", "San Francisco")
+SHIPPO_FROM_STATE = os.getenv("SHIPPO_FROM_STATE", "CA")
+SHIPPO_FROM_ZIP = os.getenv("SHIPPO_FROM_ZIP", "94117")
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY", "")
 
 # Redirect after login
 LOGIN_REDIRECT_URL = '/'

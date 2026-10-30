@@ -37,78 +37,60 @@
 
 </head>
 
-<body>
+<body class="storefront-page">
     {% include "account/_messages.html" %}
-    <nav class="navbar navbar-expand-lg navbar-light bg-light" id="nav">
-        <div class="container-fluid">
-            <a class="navbar-brand" href="{% url 'store' %}">Home</a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse"
-                data-bs-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false"
-                aria-label="Toggle navigation">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            <div class="collapse navbar-collapse" id="navbarSupportedContent">
-                <ul class="navbar-nav me-auto mb-2 mb-lg-0">
-                    <li class="nav-item">
-                        <a class="nav-link active" aria-current="page" href="#"></a>
-                    </li>
-                </ul>
-            </div>
+    <nav class="site-header navbar" id="nav" aria-label="Main navigation">
+        <div class="site-header-inner">
+            <a class="site-brand" href="{% url 'store' %}">
+                <span class="site-brand-mark" aria-hidden="true">e</span>
+                <span class="site-brand-copy">
+                    <strong>E-Commerce</strong>
+                    <small>CURATED FINDS, EVERY DAY</small>
+                </span>
+            </a>
 
-                <div id="link">
-                    <a href="{% if request.user.is_authenticated %}{% url 'account_profile' %}{% else %}/accounts/google/login/{% endif %}" aria-label="{% if request.user.is_authenticated %}Your account{% else %}Sign in with Google{% endif %}">
-                        <img id="account" src="{% static 'images/products/account.png' %}" alt="Account">
-                    </a>
-                    <a href="{% url 'cart' %}" class="cart-icon-link">
-                        <img id="cart-icon" src="{% static 'images/products/CART.png' %}">
-                        <p id="mini-cart-total">{{cartItems}}</p>
-                    </a>
+            <div class="site-header-actions">
+                <div class="dropdown">
+                    <button class="browse-toggle btn" type="button" id="dropdownMenu2" data-bs-toggle="dropdown"
+                        aria-expanded="false" aria-label="Browse categories">
+                        <span class="hamburger-icon" aria-hidden="true">
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                        </span>
+                        <span>Browse</span>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end site-category-menu" aria-labelledby="dropdownMenu2">
+                        <li><a class="dropdown-item" href="{% url 'order_history' %}">My orders</a></li>
+                        <li class="menu-label">Categories</li>
+                        {% for category in categories %}
+                            <li><a class="dropdown-item" href="{% url 'store' %}?category={{ category|urlencode }}">{{ category|capfirst }}</a></li>
+                        {% endfor %}
+                        <li class="menu-label">Need a hand?</li>
+                        <li><a class="dropdown-item" href="#">Contact us</a></li>
+                    </ul>
+                </div>
 
+                <a class="site-icon-link" href="{% if request.user.is_authenticated %}{% url 'account_profile' %}{% else %}/accounts/google/login/{% endif %}" aria-label="{% if request.user.is_authenticated %}Your account{% else %}Sign in with Google{% endif %}">
+                    <img id="account" src="{% static 'images/assets/account.png' %}" alt="">
+                    <span>Account</span>
+                </a>
+                <a href="{% url 'cart' %}" class="site-icon-link cart-icon-link" aria-label="Shopping cart, {{ cartItems }} items">
+                    <span class="site-cart-icon">
+                        <img id="cart-icon" src="{% static 'images/assets/cart.png' %}" alt="">
+                        <span id="mini-cart-total">{{ cartItems }}</span>
+                    </span>
+                    <span>Cart</span>
+                </a>
             </div>
         </div>
     </nav>
 
-    <div class="dropdown">
-        <button class="btn btn-secondary" type="button" id="dropdownMenu2" data-bs-toggle="dropdown" aria-expanded="false">
-            <div class="hamburger-icon">
-                <span></span>
-                <span></span>
-                <span></span>
-            </div>
-        </button>
-        <ul class="dropdown-menu" aria-labelledby="dropdownMenu2">
-            <li><a class="dropdown-item" href="{% url 'store' %}">Orders</a></li>
-            <small style="font-family: fantasy;">Categories</small>
-            {% for category in categories %}
-                <li><a class="dropdown-item" href="?category={{ category }}">{{ category|capfirst }}</a></li>
-            {% endfor %}
-            <small style="font-family: fantasy;">Help Centre</small>
-            <li><a class="dropdown-item" href="#">Contact Us</a></li>
-        </ul>
-    </div>
-    
-      
-      <!-- Custom CSS -->
-      <style>
-        .hamburger-icon {
-          width: 24px;
-          height: 18px;
-          display: flex;
-          flex-direction: column;
-          justify-content: space-between;
-        }
-        .hamburger-icon span {
-          display: block;
-          height: 2px;
-          background-color: white; 
-        }
-      </style>
-
-    <div class="container">
+    <main class="container store-content">
         {% block content %}
 
         {% endblock content %}
-    </div>
+    </main>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta3/dist/js/bootstrap.bundle.min.js"
         integrity="sha384-JEW9xMcG8R+pH31jmWH6WWP0WintQrMb4s7ZOdauHnUtxwoG2vI5DkLtS3qm9Ekf"
