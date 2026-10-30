@@ -6,9 +6,11 @@ from django.views.decorators.http import require_POST
 from .models import *
 import json
 import logging
-import datetime
 from decimal import Decimal
 import re
+import stripe
+from stripe import StripeClient
+from django.conf import settings
 from .shippo import (
     ShippoClient,
     ShippoError,
@@ -222,53 +224,50 @@ def updateItem(req):
         return JsonResponse('User is not logged in.', status=401, safe=False)
 
 
-def processOrder(req):
-    if not req.user.is_authenticated:
-        return JsonResponse('User is not logged in.', status=401, safe=False)
-
-    data = _json_data(req)
-    if data is None:
-        return _json_error("Invalid order data.", 400)
-    customer, created = Customer.objects.get_or_create(user=req.user)
-    order, created = Order.objects.get_or_create(customer=customer, complete=False)
-
-    if order.get_cart_items < 1:
-        return JsonResponse('Cannot checkout with an empty cart.', status=400, safe=False)
+def _checkout_details(req, data):
+    customer, _ = Customer.objects.get_or_create(user=req.user)
+    order = Order.objects.filter(customer=customer, complete=False).first()
+    if order is None or order.get_cart_items < 1:
+        return None, _json_error("Cannot checkout with an empty cart.", 400)
 
     shipping = ShippingModel.objects.filter(order=order).order_by("-date_added").first()
     if shipping is None:
-        return _json_error("Get a shipping quote before placing this order.", 400)
+        return None, _json_error("Get a shipping quote before placing this order.", 400)
     try:
         parcels = order_parcels(order)
-        total = Decimal(str(data["form"]["total"]))
         submitted_shipping = data["shipping"]
+        if not isinstance(submitted_shipping, dict):
+            raise TypeError
         selected_rate_id = submitted_shipping["rate_id"]
-    except (KeyError, TypeError, ValueError, ShippoError):
-        return _json_error("Order details are incomplete or the cart has changed.", 400)
+    except (KeyError, TypeError, ShippoError):
+        return None, _json_error("Order details are incomplete or the cart has changed.", 400)
     if parcels != shipping.parcel_manifest:
-        return _json_error("Your cart changed. Please request a new shipping quote.", 400)
+        return None, _json_error("Your cart changed. Please request a new shipping quote.", 400)
     if parcels:
         address_error = _shipping_address_error(submitted_shipping)
         if address_error:
-            return _json_error(address_error, 400)
-        quoted_address = (
-            shipping.recipient_name,
-            shipping.address,
-            shipping.city,
-            shipping.state,
-            shipping.zipcode,
-            shipping.recipient_email,
-        )
-        requested_address = (
-            submitted_shipping["name"].strip(),
-            submitted_shipping["address"].strip(),
-            submitted_shipping["city"].strip(),
-            submitted_shipping["state"].upper(),
-            submitted_shipping["zipcode"].strip(),
-            req.user.email or submitted_shipping.get("email", ""),
-        )
+            return None, _json_error(address_error, 400)
+        try:
+            quoted_address = (
+                shipping.recipient_name,
+                shipping.address,
+                shipping.city,
+                shipping.state,
+                shipping.zipcode,
+                shipping.recipient_email,
+            )
+            requested_address = (
+                submitted_shipping["name"].strip(),
+                submitted_shipping["address"].strip(),
+                submitted_shipping["city"].strip(),
+                submitted_shipping["state"].upper(),
+                submitted_shipping["zipcode"].strip(),
+                req.user.email or submitted_shipping.get("email", ""),
+            )
+        except (AttributeError, KeyError, TypeError):
+            return None, _json_error("Order details are incomplete or the cart has changed.", 400)
         if requested_address != quoted_address:
-            return _json_error("Your shipping address changed. Please request new rates.", 400)
+            return None, _json_error("Your shipping address changed. Please request new rates.", 400)
 
     selected_rate = find_rate(shipping.rates, selected_rate_id)
     if not parcels:
@@ -278,22 +277,161 @@ def processOrder(req):
             else None
         )
     if selected_rate is None:
-        return _json_error("Choose a valid shipping rate.", 400)
+        return None, _json_error("Choose a valid shipping rate.", 400)
     shipping_cost = Decimal(str(selected_rate["amount"]))
-    if total != order.get_cart_total + shipping_cost:
-        return JsonResponse('Order total does not match.', status=400, safe=False)
+    return {
+        "order": order,
+        "shipping": shipping,
+        "selected_rate": selected_rate,
+        "selected_rate_id": selected_rate_id,
+        "shipping_cost": shipping_cost,
+        "total": order.get_cart_total + shipping_cost,
+    }, None
+
+
+def _stripe_client():
+    if not settings.STRIPE_SECRET_KEY:
+        raise ValueError("Stripe is not configured.")
+    return StripeClient(settings.STRIPE_SECRET_KEY)
+
+
+@login_required
+@require_POST
+def create_payment_intent(req):
+    data = _json_data(req)
+    if data is None:
+        return _json_error("Invalid order data.", 400)
+    if not settings.STRIPE_PUBLISHABLE_KEY:
+        return _json_error("Stripe is not configured.", 503)
+    details, error = _checkout_details(req, data)
+    if error:
+        return error
+
+    amount = int(details["total"] * 100)
+    rate_key = re.sub(r"[^a-zA-Z0-9_-]", "", details["selected_rate_id"])[:80]
+    try:
+        payment_intent = _stripe_client().v1.payment_intents.create(
+            params={
+                "amount": amount,
+                "currency": "usd",
+                "automatic_payment_methods": {"enabled": True},
+                "receipt_email": req.user.email or None,
+                "metadata": {
+                    "order_id": str(details["order"].pk),
+                    "user_id": str(req.user.pk),
+                    "rate_id": details["selected_rate_id"],
+                },
+            },
+            options={
+                "idempotency_key": (
+                    f"order-{details['order'].pk}-{amount}-{rate_key}"
+                ),
+            },
+        )
+    except ValueError as exc:
+        logger.error("%s", exc)
+        return _json_error(str(exc), 503)
+    except stripe.StripeError:
+        logger.exception("Stripe could not create a payment intent.")
+        return _json_error("Payment service is unavailable. Please try again.", 502)
+
+    return JsonResponse({
+        "client_secret": payment_intent.client_secret,
+        "payment_intent_id": payment_intent.id,
+        "amount": amount,
+        "publishable_key": settings.STRIPE_PUBLISHABLE_KEY,
+    })
+
+
+@require_POST
+def processOrder(req):
+    if not req.user.is_authenticated:
+        return JsonResponse('User is not logged in.', status=401, safe=False)
+
+    data = _json_data(req)
+    if data is None:
+        return _json_error("Invalid order data.", 400)
+    payment_intent_id = data.get("payment_intent_id")
+    if not isinstance(payment_intent_id, str) or not payment_intent_id.startswith("pi_"):
+        return _json_error("A valid payment is required to place this order.", 400)
+
+    try:
+        payment_intent = _stripe_client().v1.payment_intents.retrieve(payment_intent_id)
+    except ValueError as exc:
+        logger.error("%s", exc)
+        return _json_error(str(exc), 503)
+    except stripe.StripeError:
+        logger.exception("Stripe could not verify the payment.")
+        return _json_error("Payment could not be verified. Please try again.", 502)
+
+    payment_metadata = payment_intent.metadata.to_dict()
+    if payment_metadata.get("user_id") != str(req.user.pk):
+        return _json_error("Payment does not match this order.", 400)
+    if "shipping" not in data:
+        customer = Customer.objects.filter(user=req.user).first()
+        order = Order.objects.filter(customer=customer, complete=False).first()
+        shipping = (
+            ShippingModel.objects.filter(order=order).order_by("-date_added").first()
+            if order else None
+        )
+        if shipping is None:
+            return _json_error("Get a shipping quote before placing this order.", 400)
+        data["shipping"] = {
+                "rate_id": payment_metadata.get("rate_id", ""),
+            "name": shipping.recipient_name,
+            "email": shipping.recipient_email,
+            "address": shipping.address,
+            "city": shipping.city,
+            "state": shipping.state,
+            "zipcode": shipping.zipcode,
+        }
+    details, error = _checkout_details(req, data)
+    if error:
+        return error
+    order = details["order"]
+    expected_amount = int(details["total"] * 100)
+    if (
+        payment_intent.status != "succeeded"
+        or payment_intent.amount != expected_amount
+        or payment_intent.amount_received != expected_amount
+        or payment_intent.currency != "usd"
+        or payment_metadata.get("order_id") != str(order.pk)
+    ):
+        return _json_error("Payment is incomplete or does not match this order.", 400)
 
     with transaction.atomic():
-        order.transaction_id = datetime.datetime.now().timestamp()
+        order.transaction_id = payment_intent.id
         order.complete = True
+        order.status = Order.STATUS_PENDING
         order.save()
-        shipping.selected_rate_id = selected_rate_id
-        shipping.shipping_cost = shipping_cost
-        shipping.carrier = selected_rate.get("provider", "")
-        shipping.service_level = selected_rate.get("servicelevel", "")
-        shipping.save()
+        details["shipping"].selected_rate_id = details["selected_rate_id"]
+        details["shipping"].shipping_cost = details["shipping_cost"]
+        details["shipping"].carrier = details["selected_rate"].get("provider", "")
+        details["shipping"].service_level = details["selected_rate"].get("servicelevel", "")
+        details["shipping"].save()
 
-    return JsonResponse('Order placed.', safe=False)
+    return JsonResponse({"message": "Order placed.", "order_id": order.pk})
+
+
+@login_required
+@require_POST
+def mark_order_delivered(req):
+    data = _json_data(req) or {}
+    order_id = data.get("order_id")
+    if not isinstance(order_id, int):
+        try:
+            order_id = int(order_id)
+        except (TypeError, ValueError):
+            return _json_error("Order not found.", 404)
+
+    customer = Customer.objects.filter(user=req.user).first()
+    order = Order.objects.filter(pk=order_id, customer=customer, complete=True, status=Order.STATUS_PENDING).first()
+    if order is None:
+        return _json_error("Order not found.", 404)
+
+    order.status = Order.STATUS_DELIVERED
+    order.save(update_fields=["status"])
+    return JsonResponse({"status": order.status, "order_id": order.pk})
 
 
 @login_required
@@ -423,6 +561,46 @@ def order_history(req):
         'categories': Product.objects.values_list('category', flat=True).distinct(),
     }
     return render(req, 'store/order_history.html', context)
+
+
+@login_required
+@require_POST
+def submit_review(req):
+    product_id = req.POST.get('product_id')
+    order_id = req.POST.get('order_id')
+    rating = req.POST.get('rating')
+    message = (req.POST.get('message') or '').strip()
+    customer = Customer.objects.filter(user=req.user).first()
+    if not customer or not product_id or not order_id or not rating:
+        return redirect('order_history')
+
+    try:
+        rating_value = int(rating)
+    except (TypeError, ValueError):
+        return redirect('order_history')
+    if not 1 <= rating_value <= 5:
+        return redirect('order_history')
+
+    order = Order.objects.filter(
+        pk=order_id,
+        customer=customer,
+        complete=True,
+        status=Order.STATUS_DELIVERED,
+    ).first()
+    product = Product.objects.filter(pk=product_id).first()
+    if order is None or product is None:
+        return redirect('order_history')
+
+    ProductReview.objects.update_or_create(
+        product=product,
+        customer=customer,
+        order=order,
+        defaults={
+            'rating': rating_value,
+            'message': message[:1000],
+        },
+    )
+    return redirect('order_history')
 
 
 @login_required
