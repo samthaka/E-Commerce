@@ -1,47 +1,79 @@
 {% extends 'store/main.html' %}
-{% load static %}
 {% block content %}
 
-<!-- search bar -->
-<form method="GET" action=""></form>
-    <input type="text" id="search-bar" placeholder="Search products or categories" onkeyup="filterProducts()">
-    <button type="submit">Search</button>
-</form>
-
-<div id="search-popup" style="display:none;">
-    <!-- Results from AJAX will be injected here -->
-</div>
+<section class="store-intro">
+    <div class="store-intro-copy">
+        <span class="store-eyebrow">THE COLLECTION</span>
+        <h1>Find pieces worth keeping.</h1>
+        <p>Everyday essentials and standout finds, all in one place.</p>
+    </div>
+    <form class="store-search" method="GET" action="{% url 'search' %}" role="search">
+        <label class="visually-hidden" for="search-bar">Search products or categories</label>
+        <input type="search" id="search-bar" name="query" value="{{ query|default:'' }}"
+            placeholder="Search products or categories" onkeyup="filterProducts()">
+        <button type="submit" aria-label="Search">
+            <i class="fa fa-search" aria-hidden="true"></i>
+        </button>
+    </form>
+</section>
 
 {% if not products %}
-    <p>No products found for "{{ query }}".</p>
+    <p class="store-empty">No products found{% if query %} for "{{ query }}"{% endif %}. Try another search.</p>
 {% endif %}
 
 <div id="products">
 <div class="row store-pd-container">
-
-    <!-- Rendering prodcuts from the database -->
-
     {% for product in products %}
-    <div class="col-lg-4 product-card" class="product-card" data-name="{{ product.name }}" data-category="{{ product.category }}">
-        <div class="img-container">
-            <img class="thumbnail" src="{{product.imageURL}}">
-        </div>
+    <article class="col-6 col-md-4 col-xl-3 product-card" data-name="{{ product.name|default_if_none:'' }}"
+        data-category="{{ product.category|default_if_none:'' }}">
+        <a href="#product-description-{{ product.id }}" class="product-detail-trigger"
+            data-description-target="product-description-{{ product.id }}" aria-expanded="false"
+            aria-label="Show details for {{ product.name }}">
+            <div class="img-container">
+                <img class="thumbnail" src="{{ product.imageURL }}" alt="{{ product.name }}">
+            </div>
+            <h2 class="product-title">{{ product.name }}</h2>
+        </a>
 
         <div class="product">
-            <h6><strong>{{product.name}}</strong></h6>
-            <h6>{{product.description}}</h6>
-            <hr>
-            <button data-product={{product.id}} data-action="add" 
-                class="btn btn-outline-secondary add-btn update-cart"
-                style="height: 27px; width: 100px;"><small style="display: flex;" >Add to cart</small></button>
-            <a href="#" class="btn btn-outline-success" 
-                style="height: 27px; width: 60px;"><small style="display: flex;">View</small></a>
-            <h4 style="display: inline-block; float:none;">${{product.price|floatformat:2}}</h4>
+            <p id="product-description-{{ product.id }}" class="product-description" hidden>
+                {{ product.description }}
+                {% if product.latest_review %}
+                    {% if product.latest_review.message %}
+                <span class="product-review-summary">
+                    <span>{{ product.latest_review.message }}</span>
+                </span>
+                    {% endif %}
+                {% endif %}
+            </p>
+            <div class="product-card-footer">
+                <div class="product-price-block">
+                    <strong class="product-price">${{ product.price|floatformat:2 }}</strong>
+                    {% if product.review_count %}
+                        <span class="product-rating" aria-label="{{ product.average_rating|floatformat:1 }} out of 5 stars from {{ product.review_count }} reviews">
+                            <span class="product-rating-stars" aria-hidden="true">
+                                {% for star in '12345' %}
+                                <span class="{% if product.average_rating >= forloop.counter %}is-filled{% endif %}">★</span>
+                                {% endfor %}
+                            </span>
+                            <span>{{ product.average_rating|floatformat:1 }}</span>
+                        </span>
+                    {% else %}
+                        <span class="product-rating empty" aria-label="No reviews">
+                            <span class="product-rating-stars" aria-hidden="true">★★★★★</span>
+                            <span>No reviews</span>
+                        </span>
+                    {% endif %}
+                </div>
+                <button data-product="{{ product.id }}" data-action="add"
+                    class="btn add-btn update-cart product-add-button">Add to cart</button>
+            </div>
+            <button type="button" class="product-detail-trigger product-view-button"
+                data-description-target="product-description-{{ product.id }}" aria-expanded="false"
+                aria-label="View details for {{ product.name }}">View details <span aria-hidden="true">+</span></button>
         </div>
-    </div>
+    </article>
     {% endfor %}
-
-    
 </div>
 </div>
 
@@ -55,7 +87,7 @@
             const productCategory = product.getAttribute('data-category').toLowerCase();
 
             if (productName.includes(query) || productCategory.includes(query)) {
-                product.style.display = 'block';
+                product.style.display = '';
             } else {
                 product.style.display = 'none';
             }
@@ -63,7 +95,18 @@
     }
 </script>
 
-<script src="{% static 'js/search.js' %}"></script>
-
+<script>
+    document.querySelectorAll('.product-detail-trigger').forEach(trigger => {
+        trigger.addEventListener('click', event => {
+            event.preventDefault();
+            const description = document.getElementById(trigger.dataset.descriptionTarget);
+            const shouldShow = description.hidden;
+            description.hidden = !shouldShow;
+            document.querySelectorAll(
+                `[data-description-target="${trigger.dataset.descriptionTarget}"]`
+            ).forEach(control => control.setAttribute('aria-expanded', shouldShow));
+        });
+    });
+</script>
 
 {% endblock content %}
