@@ -6,3 +6,6 @@ db.sqlite3
 htmlcov/
 .venv/
 static/images/products
+products
+*.zip
+*.download
