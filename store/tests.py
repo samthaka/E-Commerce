@@ -331,15 +331,21 @@ class ProductImportCommandTests(TestCase):
 
         response = MagicMock()
         response.__enter__.return_value = response
+        response.headers = {
+            "Content-Type": "application/zip",
+            "Content-Length": str(len(archive_bytes.getvalue())),
+        }
         response.iter_content.return_value = [archive_bytes.getvalue()]
 
         with TemporaryDirectory() as temp_dir:
             archive_path = Path(temp_dir) / "products.zip"
+            command = Command()
+            command.stdout = io.StringIO()
             with patch(
                 "store.management.commands.import_products.requests.get",
                 return_value=response,
             ) as get:
-                Command()._download_products_archive(archive_path)
+                command._download_products_archive(archive_path)
 
             get.assert_called_once()
             self.assertEqual(
@@ -347,6 +353,88 @@ class ProductImportCommandTests(TestCase):
                 "1OGwCSCrk877KSqZCbyST9YSd2jrOfYYq",
             )
             self.assertTrue(zipfile.is_zipfile(archive_path))
+            self.assertIn("100%", command.stdout.getvalue())
+            self.assertIn("[==============================]", command.stdout.getvalue())
+
+    def test_downloads_products_archive_after_google_drive_confirmation(self):
+        archive_bytes = io.BytesIO()
+        with zipfile.ZipFile(archive_bytes, "w") as archive:
+            archive.writestr("products.csv", "id,name\n1,Test\n")
+
+        warning_page = MagicMock()
+        warning_page.__enter__.return_value = warning_page
+        warning_page.headers = {"Content-Type": "text/html; charset=utf-8"}
+        warning_page.url = "https://drive.usercontent.google.com/download"
+        warning_page.text = """
+            <form action="https://drive.usercontent.google.com/download" method="get">
+              <input type="hidden" name="id" value="1OGwCSCrk877KSqZCbyST9YSd2jrOfYYq">
+              <input type="hidden" name="export" value="download">
+              <input type="hidden" name="confirm" value="t">
+              <input type="hidden" name="uuid" value="confirmation-token">
+            </form>
+        """
+
+        archive_response = MagicMock()
+        archive_response.__enter__.return_value = archive_response
+        archive_response.headers = {
+            "Content-Type": "application/zip",
+            "Content-Length": str(len(archive_bytes.getvalue())),
+        }
+        archive_response.iter_content.return_value = [archive_bytes.getvalue()]
+
+        with TemporaryDirectory() as temp_dir:
+            archive_path = Path(temp_dir) / "products.zip"
+            with patch(
+                "store.management.commands.import_products.requests.get",
+                side_effect=[warning_page, archive_response],
+            ) as get:
+                Command()._download_products_archive(archive_path)
+
+            self.assertEqual(get.call_count, 2)
+            self.assertEqual(
+                get.call_args_list[1].args[0],
+                "https://drive.usercontent.google.com/download",
+            )
+            self.assertEqual(
+                get.call_args_list[1].kwargs["params"]["uuid"],
+                "confirmation-token",
+            )
+            self.assertTrue(zipfile.is_zipfile(archive_path))
+
+    @patch("store.management.commands.import_products.shutil.disk_usage")
+    def test_download_prompt_includes_archive_size_and_available_storage(self, disk_usage):
+        disk_usage.return_value = SimpleNamespace(free=8_000_000_000)
+
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            csv_path = root / "products" / "products.csv"
+            with (
+                patch("store.management.commands.import_products.Path.cwd", return_value=root),
+                patch.object(Command, "_confirm", return_value=False) as confirm,
+            ):
+                with self.assertRaisesMessage(CommandError, f"CSV not found: {csv_path}"):
+                    Command()._ensure_products_csv(csv_path)
+
+        prompt = confirm.call_args.args[0]
+        self.assertIn("about 2.6 GB", prompt)
+        self.assertIn("Available storage", prompt)
+        self.assertIn("Extraction requires additional space", prompt)
+
+    @patch("store.management.commands.import_products.shutil.disk_usage")
+    def test_download_is_rejected_when_available_storage_is_insufficient(self, disk_usage):
+        disk_usage.return_value = SimpleNamespace(free=1_000_000_000)
+
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            csv_path = root / "products" / "products.csv"
+            with (
+                patch("store.management.commands.import_products.Path.cwd", return_value=root),
+                patch.object(Command, "_confirm") as confirm,
+            ):
+                with self.assertRaisesMessage(CommandError, "requires about 2.6 GB"):
+                    Command()._ensure_products_csv(csv_path)
+
+        confirm.assert_not_called()
 
     def test_extracts_wrapped_products_archive_into_csv_directory(self):
         with TemporaryDirectory() as temp_dir:

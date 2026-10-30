@@ -8,3 +8,4 @@ htmlcov/
 static/images/products
 products
 *.zip
+*.download

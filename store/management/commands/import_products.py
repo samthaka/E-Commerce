@@ -18,14 +18,17 @@ Usage:
   python manage.py import_products products/products.csv --wipe
 """
 import csv
+from html.parser import HTMLParser
 import os
 import shutil
 import stat
 import sys
 import tempfile
+import time
 import zipfile
 from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
+from urllib.parse import urljoin, urlparse
 
 import requests
 from django.conf import settings
@@ -43,6 +46,28 @@ REQUIRED_COLUMNS = {
     "is_synthetic",
 }
 PRODUCTS_FILE_ID = "1OGwCSCrk877KSqZCbyST9YSd2jrOfYYq"
+PRODUCTS_ARCHIVE_SIZE_BYTES = 2_600_000_000
+
+
+class _DriveConfirmationParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.forms = []
+        self.current_form = None
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        if tag == "form":
+            self.current_form = {"action": attributes.get("action", ""), "params": {}}
+            self.forms.append(self.current_form)
+        elif tag == "input" and self.current_form is not None:
+            name = attributes.get("name")
+            if name:
+                self.current_form["params"][name] = attributes.get("value", "")
+
+    def handle_endtag(self, tag):
+        if tag == "form":
+            self.current_form = None
 
 
 def to_bool(value):
@@ -78,6 +103,86 @@ class Command(BaseCommand):
         self.stdout.flush()
         return input().strip().lower() in ("y", "yes")
 
+    def _drive_confirmation(self, html, response_url):
+        parser = _DriveConfirmationParser()
+        parser.feed(html)
+        for form in parser.forms:
+            params = form["params"]
+            if params.get("id") != PRODUCTS_FILE_ID or not params.get("uuid"):
+                continue
+            download_url = urljoin(response_url, form["action"])
+            parsed_url = urlparse(download_url)
+            if parsed_url.scheme != "https" or parsed_url.hostname not in {
+                "drive.google.com",
+                "drive.usercontent.google.com",
+            }:
+                break
+            return download_url, params
+        raise CommandError(
+            "Google Drive returned an HTML page instead of the products archive. "
+            "Check that the link is publicly accessible and try again."
+        )
+
+    def _write_archive_response(self, response, downloaded_file):
+        response.raise_for_status()
+        if "text/html" in response.headers.get("Content-Type", "").lower():
+            return self._drive_confirmation(response.text, response.url)
+
+        try:
+            total_bytes = int(response.headers.get("Content-Length", 0))
+        except ValueError:
+            total_bytes = 0
+        if total_bytes <= 0:
+            total_bytes = PRODUCTS_ARCHIVE_SIZE_BYTES
+
+        downloaded_bytes = 0
+        last_reported_percent = 0
+        last_reported_at = 0
+        is_interactive = self.stdout.isatty()
+
+        def report_progress(force=False):
+            nonlocal last_reported_percent, last_reported_at
+            percent = min(100, downloaded_bytes * 100 // total_bytes)
+            now = time.monotonic()
+            if not force:
+                if is_interactive and now - last_reported_at < 0.1:
+                    return
+                if not is_interactive and percent // 5 <= last_reported_percent // 5:
+                    return
+            elif (
+                not is_interactive
+                and last_reported_at
+                and percent == last_reported_percent
+            ):
+                return
+
+            bar_width = 30
+            filled = min(bar_width, percent * bar_width // 100)
+            progress_bar = f"[{'=' * filled}{' ' * (bar_width - filled)}]"
+            downloaded_gb = downloaded_bytes / 1_000_000_000
+            total_gb = total_bytes / 1_000_000_000
+            message = (
+                f"Downloading products archive: {progress_bar} {percent:3d}% "
+                f"({downloaded_gb:.2f}/{total_gb:.2f} GB)"
+            )
+            if is_interactive:
+                self.stdout.write(f"\r{message}", ending="")
+                if force:
+                    self.stdout.write("")
+            else:
+                self.stdout.write(message)
+            self.stdout.flush()
+            last_reported_percent = percent
+            last_reported_at = now
+
+        for chunk in response.iter_content(chunk_size=1024 * 1024):
+            if chunk:
+                downloaded_file.write(chunk)
+                downloaded_bytes += len(chunk)
+                report_progress()
+        report_progress(force=True)
+        return None
+
     def _download_products_archive(self, archive_path):
         archive_path.parent.mkdir(parents=True, exist_ok=True)
         file_descriptor, temporary_path = tempfile.mkstemp(
@@ -91,17 +196,28 @@ class Command(BaseCommand):
                         params={
                             "export": "download",
                             "id": PRODUCTS_FILE_ID,
-                            "confirm": "t",
                         },
                         stream=True,
                         timeout=(15, 120),
                     ) as response:
-                        response.raise_for_status()
-                        for chunk in response.iter_content(chunk_size=1024 * 1024):
-                            if chunk:
-                                downloaded_file.write(chunk)
+                        confirmation = self._write_archive_response(response, downloaded_file)
+
+                    if confirmation:
+                        download_url, params = confirmation
+                        with requests.get(
+                            download_url,
+                            params=params,
+                            stream=True,
+                            timeout=(15, 120),
+                        ) as response:
+                            if self._write_archive_response(response, downloaded_file):
+                                raise CommandError(
+                                    "Google Drive still returned a confirmation page instead "
+                                    "of the products archive. Try again later."
+                                )
                 except requests.RequestException as exc:
                     raise CommandError(f"Could not download the products archive: {exc}") from exc
+
             if not zipfile.is_zipfile(temporary_path):
                 raise CommandError(
                     "Google Drive did not return a valid ZIP file. Check that the link is "
@@ -162,11 +278,39 @@ class Command(BaseCommand):
 
         archive_path = Path.cwd() / "products.zip"
         if archive_path.is_file():
-            prompt = f"{csv_path} is missing. Extract the existing archive {archive_path}?"
+            archive_size = archive_path.stat().st_size / 1_000_000_000
+            prompt = (
+                f"{csv_path} is missing. Extract the existing archive {archive_path} "
+                f"({archive_size:.1f} GB)?"
+            )
         else:
+            try:
+                available_bytes = shutil.disk_usage(archive_path.parent).free
+            except OSError as exc:
+                available_bytes = None
+                self.stderr.write(self.style.WARNING(
+                    f"Could not check available storage at {archive_path.parent}: {exc}"
+                ))
+
+            if (
+                available_bytes is not None
+                and available_bytes < PRODUCTS_ARCHIVE_SIZE_BYTES
+            ):
+                raise CommandError(
+                    f"Downloading the products archive requires about 2.6 GB, but only "
+                    f"{available_bytes / 1_000_000_000:.1f} GB is available at "
+                    f"{archive_path.parent}."
+                )
+            available_note = (
+                f" Available storage at {archive_path.parent}: "
+                f"{available_bytes / 1_000_000_000:.1f} GB."
+                if available_bytes is not None
+                else " Available storage could not be checked."
+            )
             prompt = (
                 f"{csv_path} is missing. Download the products archive from Google Drive "
-                f"and extract it to {csv_path.parent}?"
+                f"(about 2.6 GB) and extract it to {csv_path.parent}?{available_note} "
+                "Extraction requires additional space."
             )
         if not self._confirm(prompt):
             raise CommandError(f"CSV not found: {csv_path}")
