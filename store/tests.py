@@ -309,6 +309,21 @@ class ShippoClientTests(TestCase):
 
 
 class ProductImportCommandTests(TestCase):
+    @patch("store.management.commands.import_products.sys.stdin")
+    @patch("builtins.input", return_value="yes")
+    def test_confirm_reads_from_standard_input(self, input_mock, stdin_mock):
+        stdin_mock.isatty.return_value = True
+
+        self.assertTrue(Command()._confirm("Continue?"))
+        input_mock.assert_called_once_with()
+
+    @patch("store.management.commands.import_products.sys.stdin")
+    def test_confirm_rejects_noninteractive_input(self, stdin_mock):
+        stdin_mock.isatty.return_value = False
+
+        with self.assertRaisesMessage(CommandError, "interactive terminal"):
+            Command()._confirm("Continue?")
+
     def test_downloads_products_archive_from_google_drive(self):
         archive_bytes = io.BytesIO()
         with zipfile.ZipFile(archive_bytes, "w") as archive:

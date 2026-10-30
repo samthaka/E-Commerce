@@ -21,6 +21,7 @@ import csv
 import os
 import shutil
 import stat
+import sys
 import tempfile
 import zipfile
 from decimal import Decimal, InvalidOperation
@@ -69,13 +70,13 @@ class Command(BaseCommand):
     help = "Import products (with category tree and images) from products.csv"
 
     def _confirm(self, message):
-        if not getattr(self.stdin, "isatty", lambda: False)():
+        if not sys.stdin.isatty():
             raise CommandError(
                 f"{message} Run this command in an interactive terminal to continue."
             )
         self.stdout.write(f"{message} [y/N] ", ending="")
         self.stdout.flush()
-        return self.stdin.readline().strip().lower() in ("y", "yes")
+        return input().strip().lower() in ("y", "yes")
 
     def _download_products_archive(self, archive_path):
         archive_path.parent.mkdir(parents=True, exist_ok=True)
