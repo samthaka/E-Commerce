@@ -131,6 +131,20 @@ def store(req):
     return render(req, 'store/store.html', context)
 
 
+def categories(req):
+    customer = Customer.objects.filter(user=req.user).first() if req.user.is_authenticated else None
+    order = (
+        Order.objects.filter(customer=customer, complete=False).first()
+        if customer
+        else None
+    )
+    context = {
+        'categories': get_product_categories(),
+        'cartItems': order.get_cart_items if order else 0,
+    }
+    return render(req, 'store/categories.html', context)
+
+
 # Cart function for rendering cart view
 def cart(req):
     if req.user.is_authenticated:

@@ -16,6 +16,8 @@ Usage:
   python manage.py import_products products/products.csv
   python manage.py import_products products/products.csv --limit 500
   python manage.py import_products products/products.csv --wipe
+  python manage.py import_products --remove_products
+  python manage.py import_products --remove_products --dry-run
 """
 import csv
 from html.parser import HTMLParser
@@ -324,7 +326,7 @@ class Command(BaseCommand):
             raise CommandError(f"Products archive did not provide the requested CSV: {csv_path}")
 
     def add_arguments(self, parser):
-        parser.add_argument("csv_path", help="Path to products.csv")
+        parser.add_argument("csv_path", nargs="?", help="Path to products.csv")
         parser.add_argument(
             "--images-dir",
             help="Directory containing {id}.jpg files under MEDIA_ROOT (default: <csv folder>/images)",
@@ -332,9 +334,17 @@ class Command(BaseCommand):
         parser.add_argument("--batch-size", type=int, default=1000)
         parser.add_argument("--limit", type=int, help="Only import the first N rows")
         parser.add_argument("--dry-run", action="store_true",
-                            help="Parse and validate only; write nothing, copy nothing")
+                            help="Validate only, or preview removals with --remove_products")
         parser.add_argument("--wipe", action="store_true",
-                            help="Delete all previously imported products (source_id set) first")
+                            help=(
+                                "Delete existing imported products, then reimport products from the CSV. "
+                                "Use --remove_products to delete without reimporting."
+                            ))
+        parser.add_argument(
+            "--remove_products",
+            action="store_true",
+            help="Remove imported products from the database without deleting image files",
+        )
 
     # ------------------------------------------------------------------ helpers
     def build_category_tree(self, rows):
@@ -361,6 +371,24 @@ class Command(BaseCommand):
 
     # ------------------------------------------------------------------ main
     def handle(self, *args, **opts):
+        if opts["remove_products"]:
+            imported_products = Product.objects.filter(source_id__isnull=False)
+            count = imported_products.count()
+            if opts["dry_run"]:
+                self.stdout.write(f"Dry run: {count} imported products would be removed")
+                return
+
+            imported_products.delete()
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"Removed {count} imported products from the database. "
+                    "Product image files were not deleted."
+                )
+            )
+            return
+
+        if not opts["csv_path"]:
+            raise CommandError("csv_path is required unless --remove_products is used")
         csv_path = Path(opts["csv_path"]).expanduser()
         self._ensure_products_csv(csv_path)
         images_dir = Path(opts["images_dir"]).expanduser() if opts["images_dir"] else csv_path.parent / "images"
