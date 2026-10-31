@@ -2,6 +2,7 @@ from django.shortcuts import redirect, render
 from django.http import JsonResponse
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db import transaction
+from django.db.models import Q
 from django.views.decorators.http import require_POST
 from .models import *
 import json
@@ -88,6 +89,16 @@ def _shipment_rates_error(shipment, fallback):
 
 # Create your views here.
 
+
+def get_product_categories():
+    return (
+        Category.objects.filter(products__isnull=False)
+        .select_related("parent__parent")
+        .distinct()
+        .order_by("slug")
+    )
+
+
 # Store function for rendering store view with category filtering
 def store(req):
     if req.user.is_authenticated:
@@ -104,23 +115,34 @@ def store(req):
     selected_category = req.GET.get('category', None)
 
     if selected_category:
-        # Filter products by the selected category
-        products = Product.objects.filter(category=selected_category)
+        products = Product.objects.filter(
+            category__slug=selected_category
+        ).select_related("category__parent__parent")
     else:
-        # If no category is selected, show all products
-        products = Product.objects.all()
-
-    # Get all unique categories for the hamburger menu
-    categories = Product.objects.values_list('category', flat=True).distinct()
+        products = Product.objects.select_related("category__parent__parent")
 
     context = {
         'products': products, 
         'cartItems': cartItems,
-        'categories': categories,
+        'categories': get_product_categories(),
         'selected_category': selected_category,
     }
     
     return render(req, 'store/store.html', context)
+
+
+def categories(req):
+    customer = Customer.objects.filter(user=req.user).first() if req.user.is_authenticated else None
+    order = (
+        Order.objects.filter(customer=customer, complete=False).first()
+        if customer
+        else None
+    )
+    context = {
+        'categories': get_product_categories(),
+        'cartItems': order.get_cart_items if order else 0,
+    }
+    return render(req, 'store/categories.html', context)
 
 
 # Cart function for rendering cart view
@@ -513,18 +535,21 @@ def shipping_rates(req):
 
 def search(request):
     query = request.GET.get('query', '')
-    products = Product.objects.all()
+    products = Product.objects.select_related("category__parent__parent")
 
     if query:
-        # Filter products by name or category
-        products = Product.objects.filter(name__icontains=query) | \
-                   Product.objects.filter(category__icontains=query)
+        products = Product.objects.filter(
+            Q(name__icontains=query)
+            | Q(category__name__icontains=query)
+            | Q(category__parent__name__icontains=query)
+            | Q(category__parent__parent__name__icontains=query)
+        ).distinct()
     
     context = {
         'products': products,
         'query': query,
         'cartItems': 0,
-        'categories': Product.objects.values_list('category', flat=True).distinct(),
+        'categories': get_product_categories(),
     }
     return render(request, 'store/store.html', context)
 
@@ -535,7 +560,7 @@ def account_profile(req):
     order = Order.objects.filter(customer=customer, complete=False).first() if customer else None
     context = {
         'cartItems': order.get_cart_items if order else 0,
-        'categories': Product.objects.values_list('category', flat=True).distinct(),
+        'categories': get_product_categories(),
     }
     return render(req, 'account/profile.html', context)
 
@@ -558,7 +583,7 @@ def order_history(req):
     context = {
         'sections': sections,
         'cartItems': open_order.get_cart_items if open_order else 0,
-        'categories': Product.objects.values_list('category', flat=True).distinct(),
+        'categories': get_product_categories(),
     }
     return render(req, 'store/order_history.html', context)
 

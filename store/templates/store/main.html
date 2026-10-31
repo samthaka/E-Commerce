@@ -50,31 +50,26 @@
             </a>
 
             <div class="site-header-actions">
+                <a class="site-shop-link" href="{% url 'store' %}">Shop all</a>
+                <a class="site-category-link" href="{% url 'categories' %}"{% if request.resolver_match.url_name == 'categories' %} aria-current="page"{% endif %}>
+                    Categories</a>
                 <div class="dropdown">
-                    <button class="browse-toggle btn" type="button" id="dropdownMenu2" data-bs-toggle="dropdown"
-                        aria-expanded="false" aria-label="Browse categories">
-                        <span class="hamburger-icon" aria-hidden="true">
-                            <span></span>
-                            <span></span>
-                            <span></span>
-                        </span>
-                        <span>Browse</span>
+                    <button class="site-account-toggle btn" type="button" id="accountMenu" data-bs-toggle="dropdown"
+                        aria-expanded="false" aria-label="Account menu">
+                        <img src="{% static 'images/assets/account.png' %}" alt="">
+                        <span>Account</span>
+                        <span class="account-menu-caret" aria-hidden="true"></span>
                     </button>
-                    <ul class="dropdown-menu dropdown-menu-end site-category-menu" aria-labelledby="dropdownMenu2">
+                    <ul class="dropdown-menu dropdown-menu-end site-dropdown-menu" aria-labelledby="accountMenu">
+                        {% if request.user.is_authenticated %}
+                        <li><a class="dropdown-item" href="{% url 'account_profile' %}">Your account</a></li>
                         <li><a class="dropdown-item" href="{% url 'order_history' %}">My orders</a></li>
-                        <li class="menu-label">Categories</li>
-                        {% for category in categories %}
-                            <li><a class="dropdown-item" href="{% url 'store' %}?category={{ category|urlencode }}">{{ category|capfirst }}</a></li>
-                        {% endfor %}
-                        <li class="menu-label">Need a hand?</li>
-                        <li><a class="dropdown-item" href="#">Contact us</a></li>
+                        {% else %}
+                        <li><a class="dropdown-item" href="/accounts/google/login/">Sign in</a></li>
+                        {% endif %}
                     </ul>
                 </div>
 
-                <a class="site-icon-link" href="{% if request.user.is_authenticated %}{% url 'account_profile' %}{% else %}/accounts/google/login/{% endif %}" aria-label="{% if request.user.is_authenticated %}Your account{% else %}Sign in with Google{% endif %}">
-                    <img id="account" src="{% static 'images/assets/account.png' %}" alt="">
-                    <span>Account</span>
-                </a>
                 <a href="{% url 'cart' %}" class="site-icon-link cart-icon-link" aria-label="Shopping cart, {{ cartItems }} items">
                     <span class="site-cart-icon">
                         <img id="cart-icon" src="{% static 'images/assets/cart.png' %}" alt="">

@@ -16,6 +16,8 @@ Usage:
   python manage.py import_products products/products.csv
   python manage.py import_products products/products.csv --limit 500
   python manage.py import_products products/products.csv --wipe
+  python manage.py import_products --remove_products
+  python manage.py import_products --remove_products --dry-run
 """
 import csv
 from html.parser import HTMLParser
@@ -324,7 +326,7 @@ class Command(BaseCommand):
             raise CommandError(f"Products archive did not provide the requested CSV: {csv_path}")
 
     def add_arguments(self, parser):
-        parser.add_argument("csv_path", help="Path to products.csv")
+        parser.add_argument("csv_path", nargs="?", help="Path to products.csv")
         parser.add_argument(
             "--images-dir",
             help="Directory containing {id}.jpg files under MEDIA_ROOT (default: <csv folder>/images)",
@@ -332,9 +334,17 @@ class Command(BaseCommand):
         parser.add_argument("--batch-size", type=int, default=1000)
         parser.add_argument("--limit", type=int, help="Only import the first N rows")
         parser.add_argument("--dry-run", action="store_true",
-                            help="Parse and validate only; write nothing, copy nothing")
+                            help="Validate only, or preview removals with --remove_products")
         parser.add_argument("--wipe", action="store_true",
-                            help="Delete all previously imported products (source_id set) first")
+                            help=(
+                                "Delete existing imported products, then reimport products from the CSV. "
+                                "Use --remove_products to delete without reimporting."
+                            ))
+        parser.add_argument(
+            "--remove_products",
+            action="store_true",
+            help="Remove imported products from the database without deleting image files",
+        )
 
     # ------------------------------------------------------------------ helpers
     def build_category_tree(self, rows):
@@ -361,6 +371,24 @@ class Command(BaseCommand):
 
     # ------------------------------------------------------------------ main
     def handle(self, *args, **opts):
+        if opts["remove_products"]:
+            imported_products = Product.objects.filter(source_id__isnull=False)
+            count = imported_products.count()
+            if opts["dry_run"]:
+                self.stdout.write(f"Dry run: {count} imported products would be removed")
+                return
+
+            imported_products.delete()
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"Removed {count} imported products from the database. "
+                    "Product image files were not deleted."
+                )
+            )
+            return
+
+        if not opts["csv_path"]:
+            raise CommandError("csv_path is required unless --remove_products is used")
         csv_path = Path(opts["csv_path"]).expanduser()
         self._ensure_products_csv(csv_path)
         images_dir = Path(opts["images_dir"]).expanduser() if opts["images_dir"] else csv_path.parent / "images"
@@ -429,20 +457,43 @@ class Command(BaseCommand):
         todo = [r for r in rows if int(r["id"]) not in existing_products]
         self.stdout.write(f"{len(existing_products)} already imported, {len(todo)} to import")
 
-        # Refresh image names for existing imports after the media path change.
-        image_updates = []
+        # Refresh category and image references for existing imports.
+        existing_updates = []
+        update_fields = set()
+        category_updates = 0
+        image_updates = 0
         for r in rows:
             product = existing_products.get(int(r["id"]))
+            if not product:
+                continue
+
+            changed = False
+            category = leaves[(r["master_category"], r["sub_category"], r["article_type"])]
+            if product.category_id != category.pk:
+                product.category = category
+                category_updates += 1
+                update_fields.add("category")
+                changed = True
+
             image_file = images_dir / f"{r['id']}.jpg"
-            if product and image_file.is_file():
+            if image_file.is_file():
                 image_name = (image_path_prefix / image_file.name).as_posix()
                 if product.image.name != image_name:
                     product.image = image_name
-                    image_updates.append(product)
-        if image_updates:
+                    image_updates += 1
+                    update_fields.add("image")
+                    changed = True
+
+            if changed:
+                existing_updates.append(product)
+
+        if existing_updates:
             with transaction.atomic():
-                Product.objects.bulk_update(image_updates, ["image"])
-            self.stdout.write(f"Updated {len(image_updates)} existing image references")
+                Product.objects.bulk_update(existing_updates, sorted(update_fields))
+            if category_updates:
+                self.stdout.write(f"Updated {category_updates} existing product categories")
+            if image_updates:
+                self.stdout.write(f"Updated {image_updates} existing image references")
 
         # ---- bulk create products
         bs = opts["batch_size"]

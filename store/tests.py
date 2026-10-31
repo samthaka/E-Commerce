@@ -19,7 +19,7 @@ import stripe
 
 from .admin import OrderAdmin, ProductAdmin
 from .forms import SearchForm
-from .models import Customer, Order, OrderItem, Product, ProductReview, ReturnShipment, ShippingModel
+from .models import Category, Customer, Order, OrderItem, Product, ProductReview, ReturnShipment, ShippingModel
 from .management.commands.import_products import Command
 from .shippo import (
     InvalidParcelError,
@@ -503,9 +503,57 @@ class ProductImportCommandTests(TestCase):
 
             product = Product.objects.get(source_id=42)
             self.assertEqual(product.image.name, "images/42.jpg")
+            self.assertEqual(product.category.full_path, "Clothing > Tops > Shirt")
             self.assertTrue((media_root / product.image.name).is_file())
             self.assertFalse((media_root / "products" / "42.jpg").exists())
             self.assertEqual(Product.objects.filter(source_id=42).count(), 1)
+
+
+class RemoveImportedProductsOptionTests(TestCase):
+    def test_removes_imported_products_but_preserves_other_products_and_image_files(self):
+        imported = Product.objects.create(
+            name="Imported product",
+            price=Decimal("12.50"),
+            source_id=42,
+            image="images/42.jpg",
+        )
+        Product.objects.create(
+            name="Manually added product",
+            price=Decimal("8.50"),
+        )
+
+        with TemporaryDirectory() as temp_dir:
+            media_root = Path(temp_dir)
+            image_path = media_root / "images" / "42.jpg"
+            image_path.parent.mkdir()
+            image_path.write_bytes(b"test image")
+
+            with override_settings(MEDIA_ROOT=media_root):
+                call_command("import_products", "--remove_products")
+
+            self.assertFalse(Product.objects.filter(pk=imported.pk).exists())
+            self.assertTrue(Product.objects.filter(name="Manually added product").exists())
+            self.assertTrue(image_path.is_file())
+
+    def test_dry_run_does_not_remove_imported_products(self):
+        product = Product.objects.create(
+            name="Imported product",
+            price=Decimal("12.50"),
+            source_id=42,
+        )
+        output = io.StringIO()
+
+        call_command("import_products", "--remove_products", "--dry-run", stdout=output)
+
+        self.assertIn("1 imported products would be removed", output.getvalue())
+        self.assertTrue(Product.objects.filter(pk=product.pk).exists())
+
+    def test_import_requires_csv_path_without_remove_option(self):
+        with self.assertRaisesMessage(
+            CommandError,
+            "csv_path is required unless --remove_products is used",
+        ):
+            call_command("import_products")
 
 
 class StoreModelTests(TestCase):
@@ -516,10 +564,11 @@ class StoreModelTests(TestCase):
             name="Test Customer",
             email="customer@example.com",
         )
+        self.category = Category.objects.create(name="Accessories", slug="accessories")
         self.product = Product.objects.create(
             name="Canvas Bag",
             price=Decimal("12.50"),
-            category="Accessories",
+            category=self.category,
         )
         self.order = Order.objects.create(customer=self.customer)
 
@@ -614,10 +663,22 @@ class StoreViewTests(TestCase):
             email="shopper@example.com",
             password="secure-pass",
         )
+        self.accessories = Category.objects.create(name="Accessories", slug="accessories")
+        self.bags = Category.objects.create(
+            name="Bags",
+            slug="accessories-bags",
+            parent=self.accessories,
+        )
+        self.bag_category = Category.objects.create(
+            name="Backpacks",
+            slug="accessories-bags-backpacks",
+            parent=self.bags,
+        )
+        self.watch_category = Category.objects.create(name="Watches", slug="watches")
         self.bag = Product.objects.create(
             name="Canvas Bag",
             price=Decimal("12.50"),
-            category="Accessories",
+            category=self.bag_category,
             shipping_weight=Decimal("1.00"),
             shipping_length=Decimal("12.00"),
             shipping_width=Decimal("10.00"),
@@ -626,7 +687,7 @@ class StoreViewTests(TestCase):
         self.watch = Product.objects.create(
             name="Classic Watch",
             price=Decimal("40.00"),
-            category="Watches",
+            category=self.watch_category,
             shipping_weight=Decimal("0.50"),
             shipping_length=Decimal("8.00"),
             shipping_width=Decimal("6.00"),
@@ -678,33 +739,72 @@ class StoreViewTests(TestCase):
         self.assertTemplateUsed(response, "store/store.html")
         self.assertEqual(set(response.context["products"]), {self.bag, self.watch})
         self.assertEqual(response.context["cartItems"], 0)
-        self.assertCountEqual(response.context["categories"], ["Accessories", "Watches"])
+        self.assertCountEqual(
+            response.context["categories"],
+            [self.bag_category, self.watch_category],
+        )
+        self.assertNotContains(response, 'id="categories"')
+        self.assertNotContains(response, 'class="category-browser"')
         self.assertFalse(Customer.objects.exists())
         self.assertContains(response, 'class="product-description" hidden')
         self.assertContains(response, "View")
+        self.assertContains(response, f'href="{reverse("categories")}"')
         self.assertEqual(
             response.content.count(
                 f'data-description-target="product-description-{self.bag.pk}"'.encode()
             ),
             2,
         )
-        self.assertContains(response, f'href="{reverse("order_history")}"')
+        self.assertContains(response, 'href="/accounts/google/login/">Sign in</a>')
 
     def test_store_filters_products_by_category(self):
-        response = self.client.get(reverse("store"), {"category": "Watches"})
+        response = self.client.get(
+            reverse("store"),
+            {"category": self.watch_category.slug},
+        )
 
         self.assertEqual(list(response.context["products"]), [self.watch])
-        self.assertEqual(response.context["selected_category"], "Watches")
+        self.assertEqual(response.context["selected_category"], self.watch_category.slug)
 
-    def test_category_menu_links_to_store_from_order_history(self):
+    def test_categories_page_lists_product_categories_and_links_to_filtered_store(self):
+        response = self.client.get(reverse("categories"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "store/categories.html")
+        self.assertEqual(
+            list(response.context["categories"]),
+            [self.bag_category, self.watch_category],
+        )
+        self.assertContains(response, "Browse categories")
+        self.assertContains(
+            response,
+            f'href="{reverse("store")}?category=accessories-bags-backpacks">',
+        )
+        self.assertContains(response, "Accessories &gt; Bags")
+        self.assertContains(response, "Backpacks")
+        self.assertFalse(Customer.objects.exists())
+
+    def test_account_menu_links_to_profile_and_order_history(self):
         self.client.force_login(self.user)
 
         response = self.client.get(reverse("order_history"))
 
         self.assertContains(
             response,
-            f'href="{reverse("store")}?category=Accessories">Accessories</a>',
+            f'href="{reverse("categories")}"',
         )
+        self.assertContains(response, f'href="{reverse("account_profile")}">Your account</a>')
+        self.assertContains(response, f'href="{reverse("order_history")}">My orders</a>')
+        self.assertContains(response, f'href="{reverse("store")}">Shop all</a>')
+        self.assertNotContains(response, "More navigation options")
+        self.assertNotContains(response, "Contact us")
+
+    def test_account_menu_offers_sign_in_for_anonymous_users(self):
+        response = self.client.get(reverse("store"))
+
+        self.assertContains(response, 'aria-label="Account menu"')
+        self.assertContains(response, 'href="/accounts/google/login/">Sign in</a>')
+        self.assertNotContains(response, f'href="{reverse("order_history")}">My orders</a>')
 
     def test_authenticated_store_creates_customer_and_open_order(self):
         self.client.force_login(self.user)
@@ -2194,7 +2294,7 @@ class AdminTests(TestCase):
         self.product = Product.objects.create(
             name="Admin Test Product",
             price=Decimal("15.00"),
-            category="Test",
+            category=Category.objects.create(name="Test", slug="test"),
         )
 
     def test_store_models_are_registered_with_admin(self):
