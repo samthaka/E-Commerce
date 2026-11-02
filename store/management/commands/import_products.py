@@ -33,11 +33,16 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import urljoin, urlparse
 
 import requests
+from allauth.account.models import EmailAddress
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
+from django.db.models import Q
+from django.utils.crypto import get_random_string
 from django.utils.text import slugify
 
+from inventory.models import Vendor
 from store.models import Category, Product
 
 REQUIRED_COLUMNS = {
@@ -95,6 +100,17 @@ def to_int(value):
 
 class Command(BaseCommand):
     help = "Import products (with category tree and images) from products.csv"
+
+    DEMO_VENDORS = tuple(
+        {
+            "full_name": f"Demo Vendor {number}",
+            "shop_name": f"Demo Vendor {number} Shop",
+            "email": f"demo-vendor-{number}@example.com",
+            "username": f"demo_vendor_{number}",
+            "shop_address": f"{number} Market Street",
+        }
+        for number in range(1, 6)
+    )
 
     def _confirm(self, message):
         if not sys.stdin.isatty():
@@ -369,6 +385,65 @@ class Command(BaseCommand):
             leaves[(master, sub, article)] = a
         return leaves
 
+    def _ensure_demo_vendors(self):
+        User = get_user_model()
+        vendors = []
+        credentials = []
+        with transaction.atomic():
+            for vendor_data in self.DEMO_VENDORS:
+                vendor, _ = Vendor.objects.get_or_create(
+                    shop_name=vendor_data["shop_name"],
+                    defaults={
+                        "full_name": vendor_data["full_name"],
+                        "email": vendor_data["email"],
+                        "shop_address": vendor_data["shop_address"],
+                    },
+                )
+                if vendor.email != vendor_data["email"]:
+                    raise CommandError(
+                        f"Demo vendor shop {vendor.shop_name!r} already exists with "
+                        "a different email address."
+                    )
+
+                if vendor.user_id is None:
+                    if User._default_manager.filter(
+                        Q(username=vendor_data["username"])
+                        | Q(email__iexact=vendor_data["email"])
+                    ).exists():
+                        raise CommandError(
+                            f"Cannot create demo vendor account {vendor_data['username']!r}: "
+                            "the username or email is already in use."
+                        )
+                    password = get_random_string(24)
+                    user = User._default_manager.create_user(
+                        username=vendor_data["username"],
+                        email=vendor_data["email"],
+                        password=password,
+                        first_name=vendor_data["full_name"],
+                    )
+                    EmailAddress.objects.update_or_create(
+                        user=user,
+                        email=vendor_data["email"],
+                        defaults={"verified": True, "primary": True},
+                    )
+                    vendor.user = user
+                    vendor.save(update_fields=["user"])
+                    credentials.append((vendor_data["username"], password))
+                elif vendor.user.is_staff:
+                    raise CommandError(
+                        f"Demo vendor {vendor.shop_name!r} is linked to a staff account; "
+                        "refusing to assign products to an administrator."
+                    )
+                vendors.append(vendor)
+
+        if credentials:
+            self.stdout.write(self.style.WARNING(
+                "New demo vendor credentials (save them now; passwords are shown only once):"
+            ))
+            for username, password in credentials:
+                self.stdout.write(f"  username: {username}  password: {password}")
+        return vendors
+
     # ------------------------------------------------------------------ main
     def handle(self, *args, **opts):
         if opts["remove_products"]:
@@ -389,6 +464,12 @@ class Command(BaseCommand):
 
         if not opts["csv_path"]:
             raise CommandError("csv_path is required unless --remove_products is used")
+        dry = opts["dry_run"]
+        if not dry and not get_user_model()._default_manager.filter(is_superuser=True).exists():
+            raise CommandError(
+                "An administrator account is required before importing products. "
+                "First run `python manage.py createsuperuser`, then run this import again."
+            )
         csv_path = Path(opts["csv_path"]).expanduser()
         self._ensure_products_csv(csv_path)
         images_dir = Path(opts["images_dir"]).expanduser() if opts["images_dir"] else csv_path.parent / "images"
@@ -403,7 +484,6 @@ class Command(BaseCommand):
             raise CommandError(
                 f"Images directory must be inside MEDIA_ROOT ({media_root}): {images_dir}"
             ) from exc
-        dry = opts["dry_run"]
 
         # ---- read + validate CSV
         with open(csv_path, newline="", encoding="utf-8") as f:
@@ -439,6 +519,8 @@ class Command(BaseCommand):
                 f"Dry run OK: {len(rows)} products, {len(cats)} leaf categories. Nothing written."))
             return
 
+        vendors = self._ensure_demo_vendors()
+
         # ---- optional wipe
         if opts["wipe"]:
             deleted, _ = Product.objects.filter(source_id__isnull=False).delete()
@@ -454,6 +536,7 @@ class Command(BaseCommand):
             product.source_id: product
             for product in Product.objects.filter(source_id__isnull=False)
         }
+        vendor_indices = {int(row["id"]): index for index, row in enumerate(rows)}
         todo = [r for r in rows if int(r["id"]) not in existing_products]
         self.stdout.write(f"{len(existing_products)} already imported, {len(todo)} to import")
 
@@ -462,12 +545,22 @@ class Command(BaseCommand):
         update_fields = set()
         category_updates = 0
         image_updates = 0
-        for r in rows:
+        for index, r in enumerate(rows):
             product = existing_products.get(int(r["id"]))
             if not product:
                 continue
 
             changed = False
+            vendor = vendors[index % len(vendors)]
+            sku = f"MNY-{int(r['id'])}"
+            if product.vendor_id != vendor.pk:
+                product.vendor = vendor
+                update_fields.add("vendor")
+                changed = True
+            if product.sku != sku:
+                product.sku = sku
+                update_fields.add("sku")
+                changed = True
             category = leaves[(r["master_category"], r["sub_category"], r["article_type"])]
             if product.category_id != category.pk:
                 product.category = category
@@ -501,6 +594,7 @@ class Command(BaseCommand):
         for start in range(0, len(todo), bs):
             batch = []
             for r in todo[start:start + bs]:
+                vendor_index = vendor_indices[int(r["id"])]
                 image_file = images_dir / f"{r['id']}.jpg"
                 has_img = image_file.is_file()
                 image_name = (
@@ -508,8 +602,11 @@ class Command(BaseCommand):
                 )
                 batch.append(Product(
                     source_id=int(r["id"]),
+                    vendor=vendors[vendor_index % len(vendors)],
+                    sku=f"MNY-{int(r['id'])}",
                     name=r["name"].strip()[:200],
                     price=to_decimal(r["price"]),
+                    stock_quantity=0,
                     digital=to_bool(r["digital"]),
                     image=image_name,
                     description=r["description"],

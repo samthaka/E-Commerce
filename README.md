@@ -13,12 +13,13 @@ delivery fails, administrators can resend it from the vendor list. Vendors can m
 their inventory at <http://127.0.0.1:8000/inventory/> and, in the storefront, see only
 their own products. Vendor accounts do not have customer cart or checkout access.
 
-Administrators can find products by vendor using the **Vendor** filter in the Products
-admin and assign existing products to a vendor from that page.
+Every product must belong to a vendor. Administrators can add products from the
+Products page in Django admin, but must select a vendor; administrator accounts
+cannot own products. Vendors can manage only their own products.
 
-Inventory products include an SKU and stock quantity in addition to the storefront's
-existing product, category, image, and shipping fields. Existing imported products can
-remain unassigned until an administrator assigns them to a vendor.
+Imported products receive a stable `MNY-{id}` SKU and an initial stock quantity of
+zero, in addition to the storefront's existing product, category, image, and shipping
+fields.
 
 ## Setup
 
@@ -36,16 +37,27 @@ python manage.py migrate
 python manage.py runserver
 ```
 
-Open <http://127.0.0.1:8000/>. Create an admin account with `python manage.py createsuperuser`.
+Open <http://127.0.0.1:8000/>. Create an admin account with
+`python manage.py createsuperuser` before importing products or creating vendors.
 
 ## Import products
 
-Product data and images are stored under `products/` (`MEDIA_ROOT`). The importer expects `products/products.csv` and an `images/` directory containing `{id}.jpg` files. Preview the import before writing to the database:
+Product data and images are stored under `products/` (`MEDIA_ROOT`). The importer
+expects `products/products.csv` and an `images/` directory containing `{id}.jpg`
+files. Preview the import before writing to the database. A real import requires a
+superuser account and automatically creates five verified demo vendor accounts,
+then distributes imported products among them. The command prints each new
+vendor's username and randomly generated password once; save these credentials
+for testing. Re-running the import reuses the same vendor accounts and does not
+show their passwords again.
 
 ```bash
 python manage.py import_products products/products.csv --dry-run
 python manage.py import_products products/products.csv
 ```
+
+If you have not created an administrator yet, run
+`python manage.py createsuperuser` first and then return to the import command.
 
 If the CSV is missing, the command interactively offers to download and extract the products archive (about 2.6 GB). Ensure you have enough disk space. You can also use:
 

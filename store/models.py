@@ -71,9 +71,7 @@ class Product(models.Model):
     sku = models.CharField(max_length=64, unique=True, null=True, blank=True)
     vendor = models.ForeignKey(
         "inventory.Vendor",
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
+        on_delete=models.PROTECT,
         related_name="products",
     )
     price = models.DecimalField(max_digits=7, decimal_places=2)

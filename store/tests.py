@@ -11,16 +11,19 @@ from django.contrib import admin
 from django.contrib.auth.models import User
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.db import IntegrityError, transaction
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from unittest.mock import MagicMock, patch
 
 import stripe
+from allauth.account.models import EmailAddress
 
 from .admin import OrderAdmin, ProductAdmin
 from .forms import SearchForm
 from .models import Category, Customer, Order, OrderItem, Product, ProductReview, ReturnShipment, ShippingModel
 from .management.commands.import_products import Command
+from inventory.models import Vendor
 from .shippo import (
     InvalidParcelError,
     ShippoClient,
@@ -32,6 +35,21 @@ from .shippo import (
     serialize_rates,
     transaction_fields,
 )
+
+
+def create_test_product(**fields):
+    fields.setdefault(
+        "vendor",
+        Vendor.objects.get_or_create(
+            shop_name="Test Vendor Shop",
+            defaults={
+                "full_name": "Test Vendor",
+                "email": "test-vendor@example.com",
+                "shop_address": "1 Test Street",
+            },
+        )[0],
+    )
+    return Product.objects.create(**fields)
 
 
 class ShippoClientTests(TestCase):
@@ -264,7 +282,7 @@ class ShippoClientTests(TestCase):
     def test_order_parcels_skips_digital_items_and_builds_each_physical_parcel(self):
         customer = Customer.objects.create()
         order = Order.objects.create(customer=customer)
-        physical = Product.objects.create(
+        physical = create_test_product(
             name="Physical",
             price=Decimal("10.00"),
             shipping_weight=Decimal("1.25"),
@@ -272,7 +290,7 @@ class ShippoClientTests(TestCase):
             shipping_width=Decimal("8.00"),
             shipping_height=Decimal("2.00"),
         )
-        digital = Product.objects.create(name="Digital", price=Decimal("5.00"), digital=True)
+        digital = create_test_product(name="Digital", price=Decimal("5.00"), digital=True)
         OrderItem.objects.create(order=order, product=physical, quantity=2)
         OrderItem.objects.create(order=order, product=digital, quantity=1)
         OrderItem.objects.create(order=order, product=None, quantity=1)
@@ -291,7 +309,7 @@ class ShippoClientTests(TestCase):
     def test_order_parcels_rejects_missing_dimensions_and_invalid_quantity(self):
         customer = Customer.objects.create()
         order = Order.objects.create(customer=customer)
-        product = Product.objects.create(name="Unpacked", price=Decimal("10.00"))
+        product = create_test_product(name="Unpacked", price=Decimal("10.00"))
         item = OrderItem.objects.create(order=order, product=product, quantity=1)
 
         with self.assertRaisesMessage(InvalidParcelError, "Shipping weight and dimensions are required for Unpacked."):
@@ -491,33 +509,67 @@ class ProductImportCommandTests(TestCase):
                 writer = csv.DictWriter(csv_file, fieldnames=columns)
                 writer.writeheader()
                 writer.writerow(row)
+                for source_id in range(43, 48):
+                    writer.writerow({**row, "id": str(source_id), "name": f"Test product {source_id}"})
 
-            Product.objects.create(
+            create_test_product(
                 name="Test product",
                 price=Decimal("12.50"),
                 source_id=42,
                 image="products/42.jpg",
             )
+            User.objects.create_superuser(
+                username="import-admin",
+                email="import-admin@example.com",
+                password="Admin-password-123!",
+            )
+            output = io.StringIO()
             with override_settings(MEDIA_ROOT=media_root):
-                call_command("import_products", str(csv_path))
+                call_command("import_products", str(csv_path), stdout=output)
 
             product = Product.objects.get(source_id=42)
             self.assertEqual(product.image.name, "images/42.jpg")
             self.assertEqual(product.category.full_path, "Clothing > Tops > Shirt")
+            self.assertEqual(product.sku, "MNY-42")
+            self.assertEqual(product.stock_quantity, 0)
+            self.assertEqual(product.vendor.shop_name, "Demo Vendor 1 Shop")
             self.assertTrue((media_root / product.image.name).is_file())
             self.assertFalse((media_root / "products" / "42.jpg").exists())
-            self.assertEqual(Product.objects.filter(source_id=42).count(), 1)
+            self.assertEqual(Product.objects.filter(source_id__range=(42, 47)).count(), 6)
+            self.assertEqual(
+                set(
+                    Product.objects.filter(source_id__range=(42, 47))
+                    .values_list("vendor__shop_name", flat=True)
+                ),
+                {f"Demo Vendor {number} Shop" for number in range(1, 6)},
+            )
+            self.assertEqual(
+                Vendor.objects.filter(shop_name__startswith="Demo Vendor").count(),
+                5,
+            )
+            demo_users = User.objects.filter(username__startswith="demo_vendor_")
+            self.assertEqual(demo_users.count(), 5)
+            self.assertEqual(
+                EmailAddress.objects.filter(user__in=demo_users, verified=True).count(),
+                5,
+            )
+            self.assertIn("password:", output.getvalue())
+
+    def test_import_requires_an_admin_account_before_creating_vendors(self):
+        with self.assertRaisesMessage(CommandError, "python manage.py createsuperuser"):
+            call_command("import_products", "products.csv")
+        self.assertFalse(Vendor.objects.exists())
 
 
 class RemoveImportedProductsOptionTests(TestCase):
     def test_removes_imported_products_but_preserves_other_products_and_image_files(self):
-        imported = Product.objects.create(
+        imported = create_test_product(
             name="Imported product",
             price=Decimal("12.50"),
             source_id=42,
             image="images/42.jpg",
         )
-        Product.objects.create(
+        create_test_product(
             name="Manually added product",
             price=Decimal("8.50"),
         )
@@ -536,7 +588,7 @@ class RemoveImportedProductsOptionTests(TestCase):
             self.assertTrue(image_path.is_file())
 
     def test_dry_run_does_not_remove_imported_products(self):
-        product = Product.objects.create(
+        product = create_test_product(
             name="Imported product",
             price=Decimal("12.50"),
             source_id=42,
@@ -565,7 +617,7 @@ class StoreModelTests(TestCase):
             email="customer@example.com",
         )
         self.category = Category.objects.create(name="Accessories", slug="accessories")
-        self.product = Product.objects.create(
+        self.product = create_test_product(
             name="Canvas Bag",
             price=Decimal("12.50"),
             category=self.category,
@@ -583,9 +635,18 @@ class StoreModelTests(TestCase):
     def test_product_without_image_has_empty_image_url(self):
         self.assertEqual(self.product.imageURL, "")
 
+    def test_product_requires_a_vendor(self):
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Product.objects.create(
+                    name="Unassigned product",
+                    price=Decimal("10.00"),
+                    vendor=None,
+                )
+
     def test_order_totals_sum_item_quantities_and_prices(self):
         OrderItem.objects.create(order=self.order, product=self.product, quantity=2)
-        second_product = Product.objects.create(name="Cap", price=Decimal("7.25"))
+        second_product = create_test_product(name="Cap", price=Decimal("7.25"))
         OrderItem.objects.create(order=self.order, product=second_product, quantity=3)
 
         self.assertEqual(self.order.get_cart_items, 5)
@@ -675,7 +736,7 @@ class StoreViewTests(TestCase):
             parent=self.bags,
         )
         self.watch_category = Category.objects.create(name="Watches", slug="watches")
-        self.bag = Product.objects.create(
+        self.bag = create_test_product(
             name="Canvas Bag",
             price=Decimal("12.50"),
             category=self.bag_category,
@@ -684,7 +745,7 @@ class StoreViewTests(TestCase):
             shipping_width=Decimal("10.00"),
             shipping_height=Decimal("2.00"),
         )
-        self.watch = Product.objects.create(
+        self.watch = create_test_product(
             name="Classic Watch",
             price=Decimal("40.00"),
             category=self.watch_category,
@@ -793,7 +854,7 @@ class StoreViewTests(TestCase):
             response,
             f'href="{reverse("categories")}"',
         )
-        self.assertContains(response, f'href="{reverse("account_profile")}">Your account</a>')
+        self.assertContains(response, f'href="{reverse("account_profile")}">My account</a>')
         self.assertContains(response, f'href="{reverse("order_history")}">My orders</a>')
         self.assertContains(response, f'href="{reverse("store")}">Shop all</a>')
         self.assertNotContains(response, "More navigation options")
@@ -898,7 +959,7 @@ class StoreViewTests(TestCase):
                 zipcode="62701",
             )
         order = Order.objects.create(customer=customer)
-        ebook = Product.objects.create(
+        ebook = create_test_product(
             name="E-book",
             price=Decimal("8.00"),
             digital=True,
@@ -1074,7 +1135,7 @@ class StoreViewTests(TestCase):
         self.client.force_login(self.user)
         customer = Customer.objects.create(user=self.user)
         order = Order.objects.create(customer=customer)
-        product = Product.objects.create(name="Sticker", price=Decimal("0.10"), digital=True)
+        product = create_test_product(name="Sticker", price=Decimal("0.10"), digital=True)
         OrderItem.objects.create(order=order, product=product, quantity=1)
         shipping = self.add_shipping_quote(order, amount="0.00")
         shipping.rates[0]["object_id"] = "no_shipping_required"
@@ -1484,7 +1545,7 @@ class StoreViewTests(TestCase):
         self.client.force_login(self.user)
         customer = Customer.objects.create(user=self.user)
         order = Order.objects.create(customer=customer)
-        digital_product = Product.objects.create(
+        digital_product = create_test_product(
             name="E-book",
             price=Decimal("8.00"),
             digital=True,
@@ -1524,7 +1585,7 @@ class StoreViewTests(TestCase):
         self.assertEqual(empty_body.status_code, 400)
         self.assertEqual(empty_body.json()["error"], "Your cart is empty.")
 
-        unpacked = Product.objects.create(name="Unpacked", price=Decimal("10.00"))
+        unpacked = create_test_product(name="Unpacked", price=Decimal("10.00"))
         OrderItem.objects.create(order=order, product=unpacked, quantity=1)
         invalid_parcel = self.client.post(
             reverse("shipping_rates"),
@@ -2006,7 +2067,7 @@ class StoreViewTests(TestCase):
         self.assertEqual(missing.status_code, 404)
 
         digital_order = Order.objects.create(customer=customer, complete=True)
-        digital = Product.objects.create(name="E-book", price=Decimal("8.00"), digital=True)
+        digital = create_test_product(name="E-book", price=Decimal("8.00"), digital=True)
         OrderItem.objects.create(order=digital_order, product=digital, quantity=1)
         digital_shipping = self.add_shipping_quote(digital_order)
         no_physical_return = self.client.post(
@@ -2052,7 +2113,7 @@ class StoreViewTests(TestCase):
         self.client.force_login(self.user)
         customer = Customer.objects.create(user=self.user)
         order = Order.objects.create(customer=customer, complete=True)
-        unpacked = Product.objects.create(name="Unpacked", price=Decimal("10.00"))
+        unpacked = create_test_product(name="Unpacked", price=Decimal("10.00"))
         OrderItem.objects.create(order=order, product=unpacked, quantity=1)
         shipping = ShippingModel.objects.create(customer=customer, order=order, address="1 Main Street")
 
@@ -2265,7 +2326,7 @@ class AuthenticationAndAccountTests(TestCase):
         self.client.force_login(self.user)
         customer = Customer.objects.create(user=self.user)
         order = Order.objects.create(customer=customer)
-        product = Product.objects.create(name="Book", price=Decimal("8.00"))
+        product = create_test_product(name="Book", price=Decimal("8.00"))
         OrderItem.objects.create(order=order, product=product, quantity=3)
 
         response = self.client.get(reverse("account_profile"))
@@ -2291,7 +2352,7 @@ class AuthenticationAndAccountTests(TestCase):
 
 class AdminTests(TestCase):
     def setUp(self):
-        self.product = Product.objects.create(
+        self.product = create_test_product(
             name="Admin Test Product",
             price=Decimal("15.00"),
             category=Category.objects.create(name="Test", slug="test"),
@@ -2334,12 +2395,25 @@ class AdminTests(TestCase):
             email="admin@example.com",
             password="secure-pass",
         )
+        Vendor.objects.create(
+            user=staff_user,
+            full_name="Admin Vendor",
+            shop_name="Admin Vendor Shop",
+            email="admin-vendor@example.com",
+            shop_address="1 Admin Street",
+        )
         self.client.force_login(staff_user)
 
         response = self.client.get(reverse("admin:store_product_changelist"))
+        add_response = self.client.get(reverse("admin:store_product_add"))
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Admin Test Product")
+        self.assertEqual(add_response.status_code, 200)
+        vendor_field = add_response.context["adminform"].form.fields["vendor"]
+        self.assertTrue(vendor_field.required)
+        self.assertIn(self.product.vendor, vendor_field.queryset)
+        self.assertFalse(vendor_field.queryset.filter(user=staff_user).exists())
 
     @patch.object(OrderAdmin, "message_user")
     @patch("store.admin.ShippoClient.create_transaction")

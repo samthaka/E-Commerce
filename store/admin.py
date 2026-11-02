@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.contrib import messages
+from django.db.models import Q
 from .models import *
 from .shippo import ShippoClient, ShippoError, transaction_fields
 
@@ -28,9 +29,11 @@ class ProductAdmin(admin.ModelAdmin):
     readonly_fields = ('image_preview',)
 
     def formfield_for_foreignkey(self, db_field, request, **kwargs):
-        formfield = super().formfield_for_foreignkey(db_field, request, **kwargs)
         if db_field.name == 'vendor':
-            formfield.required = True
+            kwargs['queryset'] = db_field.remote_field.model.objects.filter(
+                Q(user__isnull=True) | Q(user__is_staff=False)
+            )
+        formfield = super().formfield_for_foreignkey(db_field, request, **kwargs)
         return formfield
 
     def image_preview(self, obj):
