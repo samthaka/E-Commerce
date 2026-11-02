@@ -1,0 +1,17 @@
+{% extends "store/main.html" %}
+
+{% block content %}
+<section class="store-intro">
+    <div class="store-intro-copy">
+        <span class="store-eyebrow">{{ vendor.shop_name }}</span>
+        <h1>{{ title }}</h1>
+    </div>
+</section>
+
+<form method="post" enctype="multipart/form-data" class="inventory-product-form">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button class="btn btn-dark" type="submit">Save product</button>
+    <a class="btn btn-outline-secondary" href="{% url 'inventory:dashboard' %}">Cancel</a>
+</form>
+{% endblock content %}

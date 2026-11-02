@@ -1,0 +1,17 @@
+{% extends "store/main.html" %}
+
+{% block content %}
+<section class="store-intro">
+    <div class="store-intro-copy">
+        <span class="store-eyebrow">{{ vendor.shop_name }}</span>
+        <h1>Delete product</h1>
+        <p>Delete “{{ product.name }}” from your shop? This cannot be undone.</p>
+    </div>
+</section>
+
+<form method="post">
+    {% csrf_token %}
+    <button class="btn btn-danger" type="submit">Delete product</button>
+    <a class="btn btn-outline-secondary" href="{% url 'inventory:dashboard' %}">Cancel</a>
+</form>
+{% endblock content %}

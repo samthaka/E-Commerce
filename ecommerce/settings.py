@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'store.apps.StoreConfig',
+    'inventory.apps.InventoryConfig',
     'django.contrib.sites',  # Required by django-allauth
     'allauth',
     'allauth.account',  # Core allauth functionality for regular email login

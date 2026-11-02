@@ -12,7 +12,10 @@ admin.site.index_title = 'Admin'
 class ProductAdmin(admin.ModelAdmin):
     list_display = (
         'name',
+        'sku',
+        'vendor',
         'price',
+        'stock_quantity',
         'digital',
         'shipping_weight',
         'shipping_length',
@@ -20,9 +23,15 @@ class ProductAdmin(admin.ModelAdmin):
         'shipping_height',
         'image_preview',
     )
-    search_fields = ('name',)
-    list_filter = ('price', 'digital')
+    search_fields = ('name', 'sku', 'vendor__shop_name')
+    list_filter = ('vendor', 'price', 'digital')
     readonly_fields = ('image_preview',)
+
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        formfield = super().formfield_for_foreignkey(db_field, request, **kwargs)
+        if db_field.name == 'vendor':
+            formfield.required = True
+        return formfield
 
     def image_preview(self, obj):
         if obj.image:

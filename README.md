@@ -2,6 +2,24 @@
 
 A Django storefront with product search, cart and checkout, order history, reviews, and Stripe and Shippo integrations.
 
+## Vendor inventory
+
+Vendors are created by an administrator from **Vendors** in Django admin. Enter the
+vendor's name, shop name, email, and address; no Django user needs to be selected or
+created. The app emails a seven-day setup link to the vendor, who can create a password
+or continue with Google using that email address. Accepting the invitation verifies
+their email without another confirmation email. If an invitation expires or email
+delivery fails, administrators can resend it from the vendor list. Vendors can manage
+their inventory at <http://127.0.0.1:8000/inventory/> and, in the storefront, see only
+their own products. Vendor accounts do not have customer cart or checkout access.
+
+Administrators can find products by vendor using the **Vendor** filter in the Products
+admin and assign existing products to a vendor from that page.
+
+Inventory products include an SKU and stock quantity in addition to the storefront's
+existing product, category, image, and shipping fields. Existing imported products can
+remain unassigned until an administrator assigns them to a vendor.
+
 ## Setup
 
 ```bash
