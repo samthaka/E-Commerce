@@ -123,6 +123,18 @@ class InventoryViewsTests(TestCase):
         self.assertRedirects(delete_response, reverse("inventory:dashboard"))
         self.assertFalse(Product.objects.filter(pk=product.pk).exists())
 
+    def test_vendor_product_form_marks_required_fields(self):
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse("inventory:product_create"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["form"].fields["name"].required)
+        self.assertTrue(response.context["form"].fields["sku"].required)
+        self.assertContains(response, 'name="name"')
+        self.assertContains(response, 'name="sku"')
+        self.assertContains(response, "Required")
+
     def test_vendor_storefront_is_limited_and_cart_is_disabled(self):
         own_product = Product.objects.create(
             vendor=self.vendor,

@@ -446,6 +446,9 @@ class Command(BaseCommand):
 
     # ------------------------------------------------------------------ main
     def handle(self, *args, **opts):
+        if settings.ENV_CONFIG == "prod":
+            raise CommandError("The import_products command is unavailable in production.")
+
         if opts["remove_products"]:
             imported_products = Product.objects.filter(source_id__isnull=False)
             count = imported_products.count()

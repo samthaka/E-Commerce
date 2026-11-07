@@ -10,7 +10,17 @@
 
 <form method="post" enctype="multipart/form-data" class="inventory-product-form">
     {% csrf_token %}
-    {{ form.as_p }}
+    {{ form.non_field_errors }}
+    {% for hidden in form.hidden_fields %}{{ hidden }}{% endfor %}
+    {% for field in form.visible_fields %}
+        <p>
+            {{ field.label_tag }}
+            {% if field.field.required %}<span class="required-field-indicator">Required</span>{% endif %}
+            {{ field }}
+            {% if field.help_text %}<small>{{ field.help_text }}</small>{% endif %}
+            {{ field.errors }}
+        </p>
+    {% endfor %}
     <button class="btn btn-dark" type="submit">Save product</button>
     <a class="btn btn-outline-secondary" href="{% url 'inventory:dashboard' %}">Cancel</a>
 </form>

@@ -26,7 +26,18 @@ class ProductAdmin(admin.ModelAdmin):
     )
     search_fields = ('name', 'sku', 'vendor__shop_name')
     list_filter = ('vendor', 'price', 'digital')
-    readonly_fields = ('image_preview',)
+
+    def get_exclude(self, request, obj=None):
+        exclude = super().get_exclude(request, obj) or ()
+        if obj is None:
+            return (*exclude, "source_id", "is_synthetic")
+        return exclude
+
+    def get_readonly_fields(self, request, obj=None):
+        readonly_fields = (*super().get_readonly_fields(request, obj), "image_preview")
+        if obj is not None:
+            return (*readonly_fields, "source_id", "is_synthetic")
+        return readonly_fields
 
     def formfield_for_foreignkey(self, db_field, request, **kwargs):
         if db_field.name == 'vendor':

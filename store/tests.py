@@ -24,6 +24,7 @@ from .forms import SearchForm
 from .models import Category, Customer, Order, OrderItem, Product, ProductReview, ReturnShipment, ShippingModel
 from .management.commands.import_products import Command
 from inventory.models import Vendor
+from ecommerce.test_runner import TestEnvironmentRunner as EnvironmentTestRunner
 from .shippo import (
     InvalidParcelError,
     ShippoClient,
@@ -2389,6 +2390,20 @@ class AdminTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertIn(reverse("admin:login"), response.url)
 
+    @override_settings(ENV_CONFIG="dev")
+    def test_django_test_runner_rejects_non_test_environment(self):
+        with self.assertRaisesMessage(
+            CommandError, "Tests can only run when ENV_CONFIG=test."
+        ):
+            EnvironmentTestRunner(verbosity=0).run_tests([])
+
+    def test_runserver_is_disabled_in_test_environment(self):
+        with self.assertRaisesMessage(
+            CommandError,
+            "The development server cannot run when ENV_CONFIG=test.",
+        ):
+            call_command("runserver", "--skip-checks")
+
     def test_superuser_can_manage_products(self):
         staff_user = User.objects.create_superuser(
             username="store-admin",
@@ -2414,6 +2429,23 @@ class AdminTests(TestCase):
         self.assertTrue(vendor_field.required)
         self.assertIn(self.product.vendor, vendor_field.queryset)
         self.assertFalse(vendor_field.queryset.filter(user=staff_user).exists())
+        self.assertNotIn("source_id", add_response.context["adminform"].form.fields)
+        self.assertNotIn("is_synthetic", add_response.context["adminform"].form.fields)
+        self.assertContains(add_response, "required")
+
+        edit_response = self.client.get(
+            reverse("admin:store_product_change", args=[self.product.pk])
+        )
+        readonly_fields = edit_response.context["adminform"].readonly_fields
+        self.assertIn("source_id", readonly_fields)
+        self.assertIn("is_synthetic", readonly_fields)
+
+    @override_settings(ENV_CONFIG="prod")
+    def test_import_command_is_disabled_in_production(self):
+        with self.assertRaisesMessage(
+            CommandError, "unavailable in production"
+        ):
+            call_command("import_products", "--remove_products", "--dry-run")
 
     @patch.object(OrderAdmin, "message_user")
     @patch("store.admin.ShippoClient.create_transaction")
