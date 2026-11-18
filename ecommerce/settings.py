@@ -14,6 +14,7 @@ from pathlib import Path
 import os
 import sys
 from dotenv import load_dotenv
+from django.core.exceptions import ImproperlyConfigured
 
 load_dotenv()
 
@@ -27,8 +28,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = os.getenv('SECRET_KEY')
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+ENV_CONFIG = os.getenv("ENV_CONFIG", "dev").strip().lower()
+if ENV_CONFIG not in {"dev", "test", "prod"}:
+    raise ImproperlyConfigured(
+        "ENV_CONFIG must be one of: dev, test, prod."
+    )
+
+DEBUG = ENV_CONFIG != "prod"
 
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS').split(',')
 
@@ -40,9 +46,10 @@ INSTALLED_APPS = [
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
+    'store.apps.StoreConfig',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'store.apps.StoreConfig',
+    'inventory.apps.InventoryConfig',
     'django.contrib.sites',  # Required by django-allauth
     'allauth',
     'allauth.account',  # Core allauth functionality for regular email login
@@ -82,17 +89,33 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'ecommerce.wsgi.application'
+TEST_RUNNER = "ecommerce.test_runner.TestEnvironmentRunner"
 
 
 # Database
 # https://docs.djangoproject.com/en/3.1/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+USE_SQLITE_IN_DEV = os.getenv("USE_SQLITE_IN_DEV", "false").strip().lower() == "true"
+
+if ENV_CONFIG == "test" or (ENV_CONFIG == "dev" and USE_SQLITE_IN_DEV):
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
     }
-}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.mysql",
+            "NAME": os.getenv("MYSQL_DATABASE", ""),
+            "USER": os.getenv("MYSQL_USER", ""),
+            "PASSWORD": os.getenv("MYSQL_PASSWORD", ""),
+            "HOST": os.getenv("MYSQL_HOST", "localhost"),
+            "PORT": os.getenv("MYSQL_PORT", "3306"),
+            "OPTIONS": {"charset": "utf8mb4"},
+        }
+    }
 
 
 # Password validation

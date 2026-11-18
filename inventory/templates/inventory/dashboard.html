@@ -1,0 +1,45 @@
+{% extends "store/main.html" %}
+
+{% block content %}
+<section class="store-intro">
+    <div class="store-intro-copy">
+        <span class="store-eyebrow">{{ vendor.shop_name }}</span>
+        <h1>Shop inventory</h1>
+        <p>Add and maintain the products listed in your shop.</p>
+    </div>
+    <a class="btn btn-dark" href="{% url 'inventory:product_create' %}">Add product</a>
+</section>
+
+{% if products %}
+<div class="table-responsive">
+    <table class="table align-middle">
+        <thead>
+            <tr>
+                <th scope="col">Product</th>
+                <th scope="col">SKU</th>
+                <th scope="col">Price</th>
+                <th scope="col">In stock</th>
+                <th scope="col">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for product in products %}
+            <tr>
+                <td>{{ product.name }}</td>
+                <td>{{ product.sku }}</td>
+                <td>${{ product.price|floatformat:2 }}</td>
+                <td>{{ product.stock_quantity }}</td>
+                <td>
+                    <a href="{% url 'inventory:product_update' product.pk %}">Edit</a>
+                    <span aria-hidden="true"> · </span>
+                    <a href="{% url 'inventory:product_delete' product.pk %}">Delete</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="store-empty">You have not added any products yet.</p>
+{% endif %}
+{% endblock content %}

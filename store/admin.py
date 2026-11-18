@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.contrib import messages
+from django.db.models import Q
 from .models import *
 from .shippo import ShippoClient, ShippoError, transaction_fields
 
@@ -12,7 +13,10 @@ admin.site.index_title = 'Admin'
 class ProductAdmin(admin.ModelAdmin):
     list_display = (
         'name',
+        'sku',
+        'vendor',
         'price',
+        'stock_quantity',
         'digital',
         'shipping_weight',
         'shipping_length',
@@ -20,9 +24,28 @@ class ProductAdmin(admin.ModelAdmin):
         'shipping_height',
         'image_preview',
     )
-    search_fields = ('name',)
-    list_filter = ('price', 'digital')
-    readonly_fields = ('image_preview',)
+    search_fields = ('name', 'sku', 'vendor__shop_name')
+    list_filter = ('vendor', 'price', 'digital')
+
+    def get_exclude(self, request, obj=None):
+        exclude = super().get_exclude(request, obj) or ()
+        if obj is None:
+            return (*exclude, "source_id", "is_synthetic")
+        return exclude
+
+    def get_readonly_fields(self, request, obj=None):
+        readonly_fields = (*super().get_readonly_fields(request, obj), "image_preview")
+        if obj is not None:
+            return (*readonly_fields, "source_id", "is_synthetic")
+        return readonly_fields
+
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        if db_field.name == 'vendor':
+            kwargs['queryset'] = db_field.remote_field.model.objects.filter(
+                Q(user__isnull=True) | Q(user__is_staff=False)
+            )
+        formfield = super().formfield_for_foreignkey(db_field, request, **kwargs)
+        return formfield
 
     def image_preview(self, obj):
         if obj.image:

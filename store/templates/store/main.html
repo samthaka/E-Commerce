@@ -53,6 +53,9 @@
                 <a class="site-shop-link" href="{% url 'store' %}">Shop all</a>
                 <a class="site-category-link" href="{% url 'categories' %}"{% if request.resolver_match.url_name == 'categories' %} aria-current="page"{% endif %}>
                     Categories</a>
+                {% if is_vendor or vendor %}
+                <a class="site-category-link" href="{% url 'inventory:dashboard' %}">Manage inventory</a>
+                {% endif %}
                 <div class="dropdown">
                     <button class="site-account-toggle btn" type="button" id="accountMenu" data-bs-toggle="dropdown"
                         aria-expanded="false" aria-label="Account menu">
@@ -62,14 +65,17 @@
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end site-dropdown-menu" aria-labelledby="accountMenu">
                         {% if request.user.is_authenticated %}
-                        <li><a class="dropdown-item" href="{% url 'account_profile' %}">Your account</a></li>
+                        <li><a class="dropdown-item" href="{% url 'account_profile' %}">My account</a></li>
+                        {% if not is_vendor and not vendor %}
                         <li><a class="dropdown-item" href="{% url 'order_history' %}">My orders</a></li>
+                        {% endif %}
                         {% else %}
                         <li><a class="dropdown-item" href="/accounts/google/login/">Sign in</a></li>
                         {% endif %}
                     </ul>
                 </div>
 
+                {% if not is_vendor and not vendor %}
                 <a href="{% url 'cart' %}" class="site-icon-link cart-icon-link" aria-label="Shopping cart, {{ cartItems }} items">
                     <span class="site-cart-icon">
                         <img id="cart-icon" src="{% static 'images/assets/cart.png' %}" alt="">
@@ -77,6 +83,7 @@
                     </span>
                     <span>Cart</span>
                 </a>
+                {% endif %}
             </div>
         </div>
     </nav>

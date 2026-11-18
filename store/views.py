@@ -24,6 +24,7 @@ from .shippo import (
     transaction_fields,
 )
 from .forms import SearchForm
+from inventory.models import Vendor
 
 
 logger = logging.getLogger(__name__)
@@ -90,9 +91,22 @@ def _shipment_rates_error(shipment, fallback):
 # Create your views here.
 
 
-def get_product_categories():
+def get_vendor(user):
+    return Vendor.objects.filter(user=user).first() if user.is_authenticated else None
+
+
+def _vendor_checkout_error(req):
+    if get_vendor(req.user):
+        return _json_error("Vendor accounts cannot use customer cart or checkout.", 403)
+    return None
+
+
+def get_product_categories(vendor=None):
+    categories = Category.objects.filter(products__isnull=False)
+    if vendor is not None:
+        categories = categories.filter(products__vendor=vendor)
     return (
-        Category.objects.filter(products__isnull=False)
+        categories
         .select_related("parent__parent")
         .distinct()
         .order_by("slug")
@@ -101,37 +115,35 @@ def get_product_categories():
 
 # Store function for rendering store view with category filtering
 def store(req):
-    if req.user.is_authenticated:
+    vendor = get_vendor(req.user)
+    cartItems = 0
+    if not vendor and req.user.is_authenticated:
         customer, created = Customer.objects.get_or_create(user=req.user)  # Ensure customer exists
         order, created = Order.objects.get_or_create(customer=customer, complete=False)
-        items = order.orderitem_set.all()
         cartItems = order.get_cart_items
-    else:
-        items = []  # For non-authenticated users
-        order = {'get_cart_total': 0, 'get_cart_items': 0}  # For non-authenticated users
-        cartItems = order['get_cart_items']
 
     # Get selected category from the query parameters (if any)
     selected_category = req.GET.get('category', None)
 
+    products = Product.objects.select_related("category__parent__parent")
+    if vendor:
+        products = products.filter(vendor=vendor)
     if selected_category:
-        products = Product.objects.filter(
-            category__slug=selected_category
-        ).select_related("category__parent__parent")
-    else:
-        products = Product.objects.select_related("category__parent__parent")
+        products = products.filter(category__slug=selected_category)
 
     context = {
         'products': products, 
         'cartItems': cartItems,
-        'categories': get_product_categories(),
+        'categories': get_product_categories(vendor),
         'selected_category': selected_category,
+        'is_vendor': bool(vendor),
     }
     
     return render(req, 'store/store.html', context)
 
 
 def categories(req):
+    vendor = get_vendor(req.user)
     customer = Customer.objects.filter(user=req.user).first() if req.user.is_authenticated else None
     order = (
         Order.objects.filter(customer=customer, complete=False).first()
@@ -139,14 +151,17 @@ def categories(req):
         else None
     )
     context = {
-        'categories': get_product_categories(),
-        'cartItems': order.get_cart_items if order else 0,
+        'categories': get_product_categories(vendor),
+        'cartItems': order.get_cart_items if order and not vendor else 0,
+        'is_vendor': bool(vendor),
     }
     return render(req, 'store/categories.html', context)
 
 
 # Cart function for rendering cart view
 def cart(req):
+    if get_vendor(req.user):
+        return redirect("inventory:dashboard")
     if req.user.is_authenticated:
         customer, created = Customer.objects.get_or_create(user=req.user)  # Ensure customer exists
         order, created = Order.objects.get_or_create(customer=customer, complete=False)
@@ -163,6 +178,8 @@ def cart(req):
 
 # Checkout function for rendering checkout view
 def checkout(req):
+    if get_vendor(req.user):
+        return redirect("inventory:dashboard")
     saved_addresses = []
     if req.user.is_authenticated:
         email = req.user.email
@@ -216,6 +233,8 @@ def checkout(req):
 
 # Update cart items
 def updateItem(req):
+    if get_vendor(req.user):
+        return _json_error("Vendor accounts cannot use customer cart or checkout.", 403)
     data = json.loads(req.body)
     productId = data['productId']
     action = data['action']
@@ -320,6 +339,9 @@ def _stripe_client():
 @login_required
 @require_POST
 def create_payment_intent(req):
+    vendor_error = _vendor_checkout_error(req)
+    if vendor_error:
+        return vendor_error
     data = _json_data(req)
     if data is None:
         return _json_error("Invalid order data.", 400)
@@ -369,6 +391,9 @@ def create_payment_intent(req):
 def processOrder(req):
     if not req.user.is_authenticated:
         return JsonResponse('User is not logged in.', status=401, safe=False)
+    vendor_error = _vendor_checkout_error(req)
+    if vendor_error:
+        return vendor_error
 
     data = _json_data(req)
     if data is None:
@@ -438,6 +463,9 @@ def processOrder(req):
 @login_required
 @require_POST
 def mark_order_delivered(req):
+    vendor_error = _vendor_checkout_error(req)
+    if vendor_error:
+        return vendor_error
     data = _json_data(req) or {}
     order_id = data.get("order_id")
     if not isinstance(order_id, int):
@@ -459,6 +487,9 @@ def mark_order_delivered(req):
 @login_required
 @require_POST
 def shipping_rates(req):
+    vendor_error = _vendor_checkout_error(req)
+    if vendor_error:
+        return vendor_error
     data = _json_data(req)
     if data is None:
         return _json_error("Invalid shipping address.", 400)
@@ -536,9 +567,12 @@ def shipping_rates(req):
 def search(request):
     query = request.GET.get('query', '')
     products = Product.objects.select_related("category__parent__parent")
+    vendor = get_vendor(request.user)
+    if vendor:
+        products = products.filter(vendor=vendor)
 
     if query:
-        products = Product.objects.filter(
+        products = products.filter(
             Q(name__icontains=query)
             | Q(category__name__icontains=query)
             | Q(category__parent__name__icontains=query)
@@ -549,7 +583,8 @@ def search(request):
         'products': products,
         'query': query,
         'cartItems': 0,
-        'categories': get_product_categories(),
+        'categories': get_product_categories(vendor),
+        'is_vendor': bool(vendor),
     }
     return render(request, 'store/store.html', context)
 
@@ -557,16 +592,21 @@ def search(request):
 @login_required
 def account_profile(req):
     customer = Customer.objects.filter(user=req.user).first()
+    vendor = Vendor.objects.filter(user=req.user).first()
     order = Order.objects.filter(customer=customer, complete=False).first() if customer else None
     context = {
-        'cartItems': order.get_cart_items if order else 0,
-        'categories': get_product_categories(),
+        'cartItems': order.get_cart_items if order and not vendor else 0,
+        'categories': get_product_categories(vendor),
+        'vendor': vendor,
+        'is_vendor': bool(vendor),
     }
     return render(req, 'account/profile.html', context)
 
 
 @login_required
 def order_history(req):
+    if get_vendor(req.user):
+        return redirect("inventory:dashboard")
     customer, created = Customer.objects.get_or_create(user=req.user)
     orders = Order.objects.filter(
         customer=customer,
@@ -582,8 +622,9 @@ def order_history(req):
     open_order = Order.objects.filter(customer=customer, complete=False).first()
     context = {
         'sections': sections,
-        'cartItems': open_order.get_cart_items if open_order else 0,
+        'cartItems': open_order.get_cart_items if open_order and not get_vendor(req.user) else 0,
         'categories': get_product_categories(),
+        'is_vendor': False,
     }
     return render(req, 'store/order_history.html', context)
 
@@ -591,6 +632,8 @@ def order_history(req):
 @login_required
 @require_POST
 def submit_review(req):
+    if get_vendor(req.user):
+        return redirect("inventory:dashboard")
     product_id = req.POST.get('product_id')
     order_id = req.POST.get('order_id')
     rating = req.POST.get('rating')
@@ -631,6 +674,9 @@ def submit_review(req):
 @login_required
 @require_POST
 def create_return_rates(req, order_id):
+    vendor_error = _vendor_checkout_error(req)
+    if vendor_error:
+        return vendor_error
     customer, _ = Customer.objects.get_or_create(user=req.user)
     order = Order.objects.filter(
         pk=order_id,
@@ -688,6 +734,9 @@ def create_return_rates(req, order_id):
 @login_required
 @require_POST
 def purchase_return_label(req, order_id, return_id):
+    vendor_error = _vendor_checkout_error(req)
+    if vendor_error:
+        return vendor_error
     customer, _ = Customer.objects.get_or_create(user=req.user)
     return_shipment = ReturnShipment.objects.filter(
         pk=return_id,
@@ -730,6 +779,9 @@ def purchase_return_label(req, order_id, return_id):
 @user_passes_test(lambda user: user.is_staff)
 @require_POST
 def purchase_shipping_label(req, order_id):
+    vendor_error = _vendor_checkout_error(req)
+    if vendor_error:
+        return vendor_error
     shipping = ShippingModel.objects.filter(
         order__pk=order_id,
         order__complete=True,
@@ -754,6 +806,9 @@ def purchase_shipping_label(req, order_id):
 @login_required
 @require_POST
 def refresh_tracking(req, order_id):
+    vendor_error = _vendor_checkout_error(req)
+    if vendor_error:
+        return vendor_error
     customer, _ = Customer.objects.get_or_create(user=req.user)
     shipping = ShippingModel.objects.filter(
         order__pk=order_id,

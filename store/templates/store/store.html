@@ -65,8 +65,10 @@
                         </span>
                     {% endif %}
                 </div>
+                {% if not is_vendor %}
                 <button data-product="{{ product.id }}" data-action="add"
                     class="btn add-btn update-cart product-add-button">Add to cart</button>
+                {% endif %}
             </div>
             <button type="button" class="product-detail-trigger product-view-button"
                 data-description-target="product-description-{{ product.id }}" aria-expanded="false"
