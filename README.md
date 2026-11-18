@@ -34,6 +34,13 @@ On Linux, install `pkg-config` and MySQL or MariaDB client development headers b
 
 Set `SECRET_KEY`, `ENV_CONFIG`, and the MySQL credentials in `.env`, then initialize the database and start the app. `ENV_CONFIG` accepts `dev`, `test`, or `prod`: development and production use MySQL by default, while tests use SQLite. In development, set `USE_SQLITE_IN_DEV=true` to use SQLite instead; this setting does not affect test or production database selection. Debug mode is enabled in development and tests, and disabled in production. The product importer is disabled in production.
 
+The storefront uses Redis to cache product and category catalog queries for 60
+seconds. Product, category, and review changes invalidate that catalog cache.
+Set `REDIS_URL` to your Redis connection URL (the default is
+`redis://127.0.0.1:6379/1`). Redis failures are logged and bypassed so the
+storefront continues querying the database. Tests use Django's in-memory cache
+and do not require a Redis server.
+
 ```bash
 python manage.py migrate
 python manage.py runserver

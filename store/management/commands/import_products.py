@@ -43,6 +43,7 @@ from django.utils.crypto import get_random_string
 from django.utils.text import slugify
 
 from inventory.models import Vendor
+from store.cache import invalidate_catalog_cache
 from store.models import Category, Product
 
 REQUIRED_COLUMNS = {
@@ -463,6 +464,7 @@ class Command(BaseCommand):
                     "Product image files were not deleted."
                 )
             )
+            invalidate_catalog_cache()
             return
 
         if not opts["csv_path"]:
@@ -518,6 +520,7 @@ class Command(BaseCommand):
 
         if dry:
             cats = {(r['master_category'], r['sub_category'], r['article_type']) for r in rows}
+            invalidate_catalog_cache()
             self.stdout.write(self.style.SUCCESS(
                 f"Dry run OK: {len(rows)} products, {len(cats)} leaf categories. Nothing written."))
             return

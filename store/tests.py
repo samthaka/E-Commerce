@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 from django.contrib import admin
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import IntegrityError, transaction
@@ -20,6 +21,7 @@ import stripe
 from allauth.account.models import EmailAddress
 
 from .admin import OrderAdmin, ProductAdmin
+from .cache import get_catalog_products
 from .forms import SearchForm
 from .models import Category, Customer, Order, OrderItem, Product, ProductReview, ReturnShipment, ShippingModel
 from .management.commands.import_products import Command
@@ -720,6 +722,7 @@ class StoreModelTests(TestCase):
 
 class StoreViewTests(TestCase):
     def setUp(self):
+        cache.clear()
         self.user = User.objects.create_user(
             username="shopper",
             email="shopper@example.com",
@@ -993,6 +996,35 @@ class StoreViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(set(response.context["products"]), {self.bag, self.watch})
+
+    def test_catalog_cache_is_reused_and_invalidated_after_product_changes(self):
+        self.assertEqual(len(get_catalog_products()), 2)
+        with self.assertNumQueries(0):
+            self.assertEqual(len(get_catalog_products()), 2)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            self.bag.name = "Updated Canvas Bag"
+            self.bag.save(update_fields=["name"])
+
+        products = get_catalog_products()
+        self.assertIn("Updated Canvas Bag", {product.name for product in products})
+
+    def test_catalog_cache_is_invalidated_after_review_changes(self):
+        get_catalog_products()
+        customer = Customer.objects.create(user=self.user)
+        order = Order.objects.create(customer=customer, complete=True)
+        with self.captureOnCommitCallbacks(execute=True):
+            ProductReview.objects.create(
+                product=self.bag,
+                customer=customer,
+                order=order,
+                rating=4,
+                message="Well made",
+            )
+
+        bag = next(product for product in get_catalog_products() if product.pk == self.bag.pk)
+        self.assertEqual(bag.average_rating, 4)
+        self.assertEqual(bag.latest_review.message, "Well made")
 
     def test_order_history_groups_completed_orders_by_status(self):
         self.client.force_login(self.user)

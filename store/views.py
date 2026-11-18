@@ -24,6 +24,7 @@ from .shippo import (
     transaction_fields,
 )
 from .forms import SearchForm
+from .cache import get_catalog_categories, get_catalog_products
 from inventory.models import Vendor
 
 
@@ -102,15 +103,7 @@ def _vendor_checkout_error(req):
 
 
 def get_product_categories(vendor=None):
-    categories = Category.objects.filter(products__isnull=False)
-    if vendor is not None:
-        categories = categories.filter(products__vendor=vendor)
-    return (
-        categories
-        .select_related("parent__parent")
-        .distinct()
-        .order_by("slug")
-    )
+    return get_catalog_categories(vendor.pk if vendor else None)
 
 
 # Store function for rendering store view with category filtering
@@ -125,11 +118,10 @@ def store(req):
     # Get selected category from the query parameters (if any)
     selected_category = req.GET.get('category', None)
 
-    products = Product.objects.select_related("category__parent__parent")
-    if vendor:
-        products = products.filter(vendor=vendor)
-    if selected_category:
-        products = products.filter(category__slug=selected_category)
+    products = get_catalog_products(
+        vendor_id=vendor.pk if vendor else None,
+        category_slug=selected_category,
+    )
 
     context = {
         'products': products, 
@@ -566,18 +558,11 @@ def shipping_rates(req):
 
 def search(request):
     query = request.GET.get('query', '')
-    products = Product.objects.select_related("category__parent__parent")
     vendor = get_vendor(request.user)
-    if vendor:
-        products = products.filter(vendor=vendor)
-
-    if query:
-        products = products.filter(
-            Q(name__icontains=query)
-            | Q(category__name__icontains=query)
-            | Q(category__parent__name__icontains=query)
-            | Q(category__parent__parent__name__icontains=query)
-        ).distinct()
+    products = get_catalog_products(
+        vendor_id=vendor.pk if vendor else None,
+        query=query,
+    )
     
     context = {
         'products': products,

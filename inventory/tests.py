@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from django.contrib import admin
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.core import signing
 from django.core import mail
 from django.test import TestCase, override_settings
@@ -18,6 +19,7 @@ from .tokens import INVITE_SALT
 
 class InventoryViewsTests(TestCase):
     def setUp(self):
+        cache.clear()
         self.user = User.objects.create_user(username="vendor-user", password="password")
         self.vendor = Vendor.objects.create(
             user=self.user,
