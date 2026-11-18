@@ -37,6 +37,8 @@ if ENV_CONFIG not in {"dev", "test", "prod"}:
 DEBUG = ENV_CONFIG != "prod"
 
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS').split(',')
+CATALOG_CACHE_TIMEOUT = int(os.getenv("CATALOG_CACHE_TIMEOUT", "60"))
+DJANGO_REDIS_LOG_IGNORED_EXCEPTIONS = True
 
 # Application definition
 
@@ -90,6 +92,30 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'ecommerce.wsgi.application'
 TEST_RUNNER = "ecommerce.test_runner.TestEnvironmentRunner"
+
+if ENV_CONFIG == "test":
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "ecommerce-tests",
+        }
+    }
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": os.getenv("REDIS_URL", "redis://127.0.0.1:6379/1"),
+            "OPTIONS": {
+                "CLIENT_CLASS": "django_redis.client.DefaultClient",
+                "IGNORE_EXCEPTIONS": True,
+                "SOCKET_CONNECT_TIMEOUT": 1,
+                "SOCKET_TIMEOUT": 1,
+                "CONNECTION_POOL_KWARGS": {"max_connections": 50},
+            },
+            "KEY_PREFIX": os.getenv("REDIS_KEY_PREFIX", "ecommerce"),
+            "TIMEOUT": int(os.getenv("CACHE_DEFAULT_TIMEOUT", "300")),
+        }
+    }
 
 
 # Database
