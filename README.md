@@ -30,7 +30,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-On Linux, install `pkg-config` and MySQL or MariaDB client development headers before installing requirements; `mysqlclient` needs them to build.
+On Linux, run `sudo apt install pkg-config libmysqlclient-dev build-essential` to install MySQL build tools and install MySQL or MariaDB client development headers before installing requirements; `mysqlclient` needs them to build.
 
 Set `SECRET_KEY`, `ENV_CONFIG`, and the MySQL credentials in `.env`, then initialize the database and start the app. `ENV_CONFIG` accepts `dev`, `test`, or `prod`: development and production use MySQL by default, while tests use SQLite. In development, set `USE_SQLITE_IN_DEV=true` to use SQLite instead; this setting does not affect test or production database selection. Debug mode is enabled in development and tests, and disabled in production. The product importer is disabled in production.
 
