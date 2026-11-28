@@ -57,6 +57,7 @@ pipeline {
             }
             agent {
                 node {
+                    label 'built-in' // or your agent/node label
                     customWorkspace '/home/wizard/ecommerce'
                 }
             }
