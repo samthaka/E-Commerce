@@ -5,7 +5,6 @@ After=network.target
 [Service]
 Type=simple
 User=wizard
-Group=wizard
 WorkingDirectory=/home/wizard/ecommerce
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=/home/wizard/ecommerce/.env
