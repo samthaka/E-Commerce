@@ -1,5 +1,10 @@
 pipeline {
-    agent any
+    agent {
+                    node {
+                        label 'built-in' // or your agent/node label
+                        customWorkspace '/home/wizard/ecommerce'
+                    }
+                }
 
     options {
         skipDefaultCheckout(true)
@@ -9,7 +14,7 @@ pipeline {
     parameters {
         string(
             name: 'DEPLOY_BRANCH',
-            defaultValue: 'main',
+            defaultValue: 'master',
             description: 'Branch that is allowed to deploy to production'
         )
     }
@@ -20,6 +25,10 @@ pipeline {
         ENV_CONFIG = 'test'
         SECRET_KEY = 'jenkins-test-only-key'
         ALLOWED_HOSTS = 'localhost,127.0.0.1,testserver'
+        STRIPE_PUBLISHABLE_KEY = 'pk_test_ci_placeholder'
+        STRIPE_SECRET_KEY = 'sk_test_ci_placeholder'
+        SHIPPO_API_TOKEN = 'shippo_test_ci_placeholder'
+        SHIPPO_TEST_MODE = 'true'
         PYENV_VERSION = 'e-commerce'
         PYENV_ROOT = '/home/wizard/.pyenv'
         DJANGO_ENV_FILE = '/dev/null'
@@ -35,9 +44,8 @@ pipeline {
         stage('Test') {
             steps {
                 sh '''
-                    export PATH="$PYENV_ROOT/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
-                    eval "$(pyenv init -)"
-                    pyenv exec python -m pytest
+                    set -eu
+                    "$DEPLOY_PYTHON" -m pytest
                 '''
             }
         }
@@ -52,6 +60,7 @@ pipeline {
             }
             agent {
                 node {
+                    label 'built-in' // or your agent/node label
                     customWorkspace '/home/wizard/ecommerce'
                 }
             }
