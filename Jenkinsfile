@@ -58,14 +58,7 @@ pipeline {
                     branch == params.DEPLOY_BRANCH
                 }
             }
-            agent {
-                node {
-                    label 'built-in' // or your agent/node label
-                    customWorkspace '/home/wizard/ecommerce'
-                }
-            }
             steps {
-                checkout scm
                 sh '''
                     set -eu
                     test -r "$DEPLOY_DIR/.env" || {
