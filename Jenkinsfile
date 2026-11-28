@@ -40,9 +40,8 @@ pipeline {
         stage('Test') {
             steps {
                 sh '''
-                    export PATH="$PYENV_ROOT/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
-                    eval "$(pyenv init -)"
-                    pyenv exec python -m pytest
+                    set -eu
+                    "$DEPLOY_PYTHON" -m pytest
                 '''
             }
         }
