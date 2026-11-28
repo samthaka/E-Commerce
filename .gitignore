@@ -5,6 +5,7 @@ db.sqlite3
 .coverage
 htmlcov/
 .venv/
+staticfiles/
 static/images/products
 products
 *.zip
