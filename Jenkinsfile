@@ -67,7 +67,6 @@ pipeline {
                         echo "Create $DEPLOY_DIR/.env with production settings before deploying."
                         exit 1
                     }
-                    chmod 600 "$DEPLOY_DIR/.env"
 
                     mkdir -p "$DEPLOY_DIR/products" "$DEPLOY_DIR/staticfiles"
 
