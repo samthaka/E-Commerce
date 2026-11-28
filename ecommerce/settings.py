@@ -16,7 +16,9 @@ import sys
 from dotenv import load_dotenv
 from django.core.exceptions import ImproperlyConfigured
 
-load_dotenv()
+load_dotenv(
+    os.getenv("DJANGO_ENV_FILE") or Path(__file__).resolve().parent.parent / ".env"
+)
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -36,7 +38,33 @@ if ENV_CONFIG not in {"dev", "test", "prod"}:
 
 DEBUG = ENV_CONFIG != "prod"
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS').split(',')
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv("ALLOWED_HOSTS", "").split(",")
+    if host.strip()
+]
+if not ALLOWED_HOSTS:
+    raise ImproperlyConfigured("ALLOWED_HOSTS must contain at least one host.")
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+if ENV_CONFIG == "prod":
+    SECURE_SSL_REDIRECT = (
+        os.getenv("SECURE_SSL_REDIRECT", "true").strip().lower() == "true"
+    )
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "0"))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = (
+        os.getenv("SECURE_HSTS_INCLUDE_SUBDOMAINS", "false").strip().lower()
+        == "true"
+    )
+    SECURE_HSTS_PRELOAD = (
+        os.getenv("SECURE_HSTS_PRELOAD", "false").strip().lower() == "true"
+    )
 CATALOG_CACHE_TIMEOUT = int(os.getenv("CATALOG_CACHE_TIMEOUT", "60"))
 DJANGO_REDIS_LOG_IGNORED_EXCEPTIONS = True
 
