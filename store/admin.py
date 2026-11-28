@@ -1,13 +1,51 @@
 from django.contrib import admin
+from django.contrib import messages
+from django.db.models import Q
 from .models import *
+from .shippo import ShippoClient, ShippoError, transaction_fields
 
 from django.utils.html import mark_safe
 
+admin.site.site_header = 'E-commerce'
+admin.site.site_title = 'E-commerce'
+admin.site.index_title = 'Admin'
+
 class ProductAdmin(admin.ModelAdmin):
-    list_display = ('name', 'price', 'description', 'image_preview')
-    search_fields = ('name',)
-    list_filter = ('price', 'description')
-    readonly_fields = ('image_preview',)
+    list_display = (
+        'name',
+        'sku',
+        'vendor',
+        'price',
+        'stock_quantity',
+        'digital',
+        'shipping_weight',
+        'shipping_length',
+        'shipping_width',
+        'shipping_height',
+        'image_preview',
+    )
+    search_fields = ('name', 'sku', 'vendor__shop_name')
+    list_filter = ('vendor', 'price', 'digital')
+
+    def get_exclude(self, request, obj=None):
+        exclude = super().get_exclude(request, obj) or ()
+        if obj is None:
+            return (*exclude, "source_id", "is_synthetic")
+        return exclude
+
+    def get_readonly_fields(self, request, obj=None):
+        readonly_fields = (*super().get_readonly_fields(request, obj), "image_preview")
+        if obj is not None:
+            return (*readonly_fields, "source_id", "is_synthetic")
+        return readonly_fields
+
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        if db_field.name == 'vendor':
+            kwargs['queryset'] = db_field.remote_field.model.objects.filter(
+                Q(user__isnull=True) | Q(user__is_staff=False)
+            )
+        formfield = super().formfield_for_foreignkey(db_field, request, **kwargs)
+        return formfield
 
     def image_preview(self, obj):
         if obj.image:
@@ -18,7 +56,38 @@ class ProductAdmin(admin.ModelAdmin):
 
 admin.site.register(Customer)
 admin.site.register(Product,ProductAdmin)
-admin.site.register(Order)
+@admin.register(Order)
+class OrderAdmin(admin.ModelAdmin):
+    list_display = ("id", "customer", "date_ordered", "complete", "status")
+    list_filter = ("complete", "status")
+    actions = ("create_shippo_labels",)
+
+    @admin.action(description="Create Shippo labels for selected orders")
+    def create_shippo_labels(self, request, queryset):
+        created = 0
+        for order in queryset.filter(complete=True):
+            shipping = order.shippingmodel_set.order_by("-date_added").first()
+            if shipping is None or not shipping.selected_rate_id or shipping.label_url:
+                continue
+            try:
+                transaction = ShippoClient().create_transaction(shipping.selected_rate_id)
+            except ShippoError as exc:
+                self.message_user(
+                    request,
+                    f"Order #{order.pk}: {exc}",
+                    level=messages.ERROR,
+                )
+                continue
+            for field, value in transaction_fields(transaction).items():
+                setattr(shipping, field, value)
+            shipping.save()
+            created += 1
+        if created:
+            self.message_user(
+                request,
+                f"Created {created} Shippo label(s).",
+                level=messages.SUCCESS,
+            )
 admin.site.register(OrderItem)
 admin.site.register(ShippingModel)
-
+admin.site.register(ReturnShipment)

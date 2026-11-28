@@ -15,8 +15,11 @@
                     <th><h5>Items: <strong>{{order.get_cart_items}}</strong></h5></th>
                     <th><h5>Total: <strong>${{order.get_cart_total}}</strong></h5></th>
                     <th>
-                        <a href="{% url 'checkout' %}" class="btn btn-success"
-                        style="margin: 5px; float: right; background-color: #e6bf12; font-weight: bolder;">Checkout</a>
+                        <button id="checkout-button" type="button" class="btn btn-success"
+                        style="margin: 5px; float: right; background-color: #e6bf12; font-weight: bolder;"
+                        {% if order.get_cart_items < 1 %}disabled aria-disabled="true"{% endif %}
+                        data-url="{% url 'checkout' %}"
+                        onclick="if (!this.disabled) window.location.href=this.dataset.url;">Checkout</button>
                     </th>
                 </tr>
             </table>

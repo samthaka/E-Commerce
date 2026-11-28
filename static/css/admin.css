@@ -1,0 +1,293 @@
+:root,
+html[data-theme="light"],
+html[data-theme="auto"] {
+  color-scheme: light;
+  --primary: #c95334;
+  --secondary: #285d53;
+  --accent: #e9a34a;
+  --primary-fg: #fff;
+  --body-fg: #263832;
+  --body-bg: #f3f6f2;
+  --body-quiet-color: #617069;
+  --body-medium-color: #44544d;
+  --body-loud-color: #173a2e;
+  --header-color: #fff;
+  --header-branding-color: #fff;
+  --header-bg: #2a2a2a;
+  --header-link-color: #e4eee8;
+  --breadcrumbs-fg: #44544d;
+  --breadcrumbs-link-fg: #285d53;
+  --breadcrumbs-bg: #eaf1ec;
+  --link-fg: #176b5a;
+  --link-hover-color: #a8432c;
+  --link-selected-fg: #193a35;
+  --hairline-color: #dfe6e0;
+  --border-color: #d4ded6;
+  --darkened-bg: #edf2ed;
+  --selected-bg: #e4ebe5;
+  --selected-row: #fff4d5;
+  --button-fg: #263832;
+  --button-bg: #fff;
+  --button-hover-bg: #e4ebe5;
+  --default-button-bg: #c95334;
+  --default-button-hover-bg: #a8432c;
+  --admin-surface: #fff;
+  --admin-surface-raised: #f6f8f5;
+  --admin-surface-muted: #eaf1ec;
+  --admin-row-hover: #f2f7f2;
+  --admin-accent-fg: #a8432c;
+  --admin-shadow: 0 3px 12px rgb(25 58 53 / 7%);
+  --admin-header-shadow: 0 2px 10px rgb(17 45 38 / 14%);
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --primary: #e17453;
+  --secondary: #8ed2ba;
+  --accent: #f0b75f;
+  --primary-fg: #fff;
+  --body-fg: #e6edf5;
+  --body-bg: #101827;
+  --body-quiet-color: #b5c2d1;
+  --body-medium-color: #ccd6e2;
+  --body-loud-color: #f3f6fa;
+  --header-color: #fff;
+  --header-branding-color: #fff;
+  --header-bg: #0b1220;
+  --header-link-color: #dce6f0;
+  --breadcrumbs-fg: #ccd6e2;
+  --breadcrumbs-link-fg: #fff;
+  --breadcrumbs-bg: #172235;
+  --link-fg: #8ed2ba;
+  --link-hover-color: #ffc18f;
+  --link-selected-fg: #e5ede8;
+  --hairline-color: #33445a;
+  --border-color: #42536a;
+  --darkened-bg: #131e31;
+  --selected-bg: #22334b;
+  --selected-row: #493b28;
+  --button-fg: #fff;
+  --button-bg: #243b4e;
+  --button-hover-bg: #31536a;
+  --default-button-bg: #c95334;
+  --default-button-hover-bg: #e17453;
+  --admin-surface: #172235;
+  --admin-surface-raised: #1d2a3e;
+  --admin-surface-muted: #22334b;
+  --admin-row-hover: #22334b;
+  --admin-accent-fg: #ffad88;
+  --admin-shadow: 0 3px 12px rgb(0 0 0 / 24%);
+  --admin-header-shadow: 0 2px 10px rgb(0 0 0 / 30%);
+}
+
+@media (prefers-color-scheme: dark) {
+  html[data-theme="auto"] {
+    color-scheme: dark;
+    --primary: #e17453;
+    --secondary: #8ed2ba;
+    --accent: #f0b75f;
+    --primary-fg: #fff;
+    --body-fg: #e6edf5;
+    --body-bg: #101827;
+    --body-quiet-color: #b5c2d1;
+    --body-medium-color: #ccd6e2;
+    --body-loud-color: #f3f6fa;
+    --header-color: #fff;
+    --header-branding-color: #fff;
+    --header-bg: #0b1220;
+    --header-link-color: #dce6f0;
+    --breadcrumbs-fg: #ccd6e2;
+    --breadcrumbs-link-fg: #fff;
+    --breadcrumbs-bg: #172235;
+    --link-fg: #8ed2ba;
+    --link-hover-color: #ffc18f;
+    --link-selected-fg: #e5ede8;
+    --hairline-color: #33445a;
+    --border-color: #42536a;
+    --darkened-bg: #131e31;
+    --selected-bg: #22334b;
+    --selected-row: #493b28;
+    --button-fg: #fff;
+    --button-bg: #243b4e;
+    --button-hover-bg: #31536a;
+    --default-button-bg: #c95334;
+    --default-button-hover-bg: #e17453;
+    --admin-surface: #172235;
+    --admin-surface-raised: #1d2a3e;
+    --admin-surface-muted: #22334b;
+    --admin-row-hover: #22334b;
+    --admin-accent-fg: #ffad88;
+    --admin-shadow: 0 3px 12px rgb(0 0 0 / 24%);
+    --admin-header-shadow: 0 2px 10px rgb(0 0 0 / 30%);
+  }
+}
+
+body {
+  background: var(--body-bg);
+  color: var(--body-fg);
+}
+
+#header {
+  min-height: 64px;
+  padding: 0 28px;
+  box-shadow: var(--admin-header-shadow);
+}
+
+#branding h1,
+#branding h1 a {
+  color: var(--header-branding-color);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+#user-tools {
+  color: var(--header-link-color);
+  font-size: 12px;
+}
+
+#user-tools a:focus,
+#user-tools a:hover {
+  color: var(--header-color);
+}
+
+div.breadcrumbs {
+  padding: 12px 28px;
+  font-size: 12px;
+}
+
+#content {
+  padding: 28px;
+}
+
+#content h1 {
+  margin-bottom: 22px;
+  color: var(--body-loud-color);
+  font-size: 26px;
+  font-weight: 700;
+}
+
+.module,
+.inline-group,
+#changelist {
+  overflow: hidden;
+  border: 1px solid var(--hairline-color);
+  border-radius: 8px;
+  background: var(--admin-surface);
+  box-shadow: var(--admin-shadow);
+}
+
+.module h2,
+.module caption,
+.inline-group h2 {
+  padding: 14px 18px;
+  background: var(--admin-surface-muted);
+  color: var(--body-loud-color);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.module table th,
+.module table td,
+#result_list th,
+#result_list td {
+  padding: 12px 14px;
+  vertical-align: middle;
+}
+
+#result_list thead th {
+  background: var(--admin-surface-raised);
+  color: var(--body-medium-color);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+#result_list tbody tr:hover {
+  background: var(--admin-row-hover);
+}
+
+#nav-sidebar {
+  border-right: 1px solid var(--hairline-color);
+  background: var(--admin-surface);
+}
+
+#nav-sidebar .current-app .section:link,
+#nav-sidebar .current-app .section:visited,
+#nav-sidebar .current-model:link,
+#nav-sidebar .current-model:visited {
+  color: var(--admin-accent-fg);
+  font-weight: 700;
+}
+
+#nav-sidebar a:focus,
+#nav-sidebar a:hover {
+  color: var(--admin-accent-fg);
+}
+
+input,
+select,
+textarea,
+.selector,
+.selector-chosen {
+  border-radius: 5px;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--secondary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--secondary) 18%, transparent);
+  outline: 0;
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--secondary);
+  outline-offset: 2px;
+}
+
+.button,
+input[type="submit"],
+input[type="button"],
+.submit-row input {
+  border-radius: 5px;
+  font-weight: 700;
+}
+
+.button.default,
+input[type="submit"].default,
+.submit-row input.default {
+  background: var(--default-button-bg);
+}
+
+.button.default:hover,
+input[type="submit"].default:hover,
+.submit-row input.default:hover {
+  background: var(--default-button-hover-bg);
+}
+
+#changelist-filter {
+  border-left: 1px solid var(--hairline-color);
+  background: var(--admin-surface);
+}
+
+#changelist-filter h2 {
+  background: var(--admin-surface-muted);
+  color: var(--body-loud-color);
+}
+
+@media (max-width: 767px) {
+  #header {
+    padding: 0 16px;
+  }
+
+  div.breadcrumbs {
+    padding: 10px 16px;
+  }
+
+  #content {
+    padding: 20px 16px;
+  }
+}

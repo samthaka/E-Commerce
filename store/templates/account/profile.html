@@ -32,7 +32,7 @@
             </div>
             <div>
                 <dt>Account type</dt>
-                <dd>{% if request.user.is_staff %}Staff{% else %}Customer{% endif %}</dd>
+                <dd>{% if request.user.is_staff %}Staff{% elif vendor %}Vendor{% else %}Customer{% endif %}</dd>
             </div>
             <div>
                 <dt>Member since</dt>
@@ -54,6 +54,9 @@
             <a href="{% url 'account_email' %}"><span>Change email address</span><span aria-hidden="true">&#8594;</span></a>
             <a href="{% url 'account_change_password' %}"><span>Change password</span><span aria-hidden="true">&#8594;</span></a>
             <a href="{% url 'socialaccount_connections' %}"><span>Connected accounts</span><span aria-hidden="true">&#8594;</span></a>
+            {% if vendor %}
+            <a href="{% url 'inventory:dashboard' %}"><span>Manage shop inventory</span><span aria-hidden="true">&#8594;</span></a>
+            {% endif %}
             <form method="post" action="{% url 'account_logout' %}">
                 {% csrf_token %}
                 <button type="submit"><span>Sign out</span><span aria-hidden="true">&#8594;</span></button>

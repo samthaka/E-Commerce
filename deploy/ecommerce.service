@@ -1,0 +1,22 @@
+[Unit]
+Description=E-Commerce Gunicorn application
+After=network.target
+
+[Service]
+Type=simple
+User=wizard
+Group=wizard
+WorkingDirectory=/home/wizard/ecommerce
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/home/wizard/ecommerce/.env
+ExecStart=/usr/bin/env ENV_CONFIG=prod DJANGO_ENV_FILE=/home/wizard/ecommerce/.env /home/wizard/.pyenv/versions/3.10.13/envs/e-commerce/bin/gunicorn --workers 2 --timeout 60 --access-logfile - --error-logfile - --bind 127.0.0.1:8000 ecommerce.wsgi:application
+Restart=on-failure
+RestartSec=5
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/wizard/ecommerce/products
+
+[Install]
+WantedBy=multi-user.target

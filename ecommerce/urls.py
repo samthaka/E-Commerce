@@ -24,9 +24,9 @@ urlpatterns = [
     path('accounts/profile/', account_profile, name='account_profile'),
     path('accounts/', include('allauth.urls')),  # Include allauth URLs
     path('admin/', admin.site.urls),
+    path('inventory/', include('inventory.urls')),
     path('', include('store.urls')),
     
 ]
 
 urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
-

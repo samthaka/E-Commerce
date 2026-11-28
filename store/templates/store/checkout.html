@@ -2,147 +2,414 @@
 {% load static %}
 {% block content %}
 
-    <div class="row">
-        <div class="col-lg-6">
-            <div class="box-element" id="form-wrapper">
-                <form id="form">
-                    <div id="user-info">
-                        <div class="form-field">
-                            <input required class="form-control" type="text" name="name" placeholder="Name..." >
-                        </div>
-                        <div class="form-field">
-                            <input required class="form-control" type="email" name="email" placeholder="Email..." >
-                        </div>
-                        <hr>
-                    </div>
-                    <div id="shipping-info">
-                        
-                        <p>Shipping Info:</p>
-                        <hr>
-                        <div class="form-field">
-                            <input required class="form-control" type="text" name="address" placeholder="Address..." >
-                        </div>
-                        <div class="form-field">
-                            <input required class="form-control" type="text" name="city" placeholder="City..." >
-                        </div>
-                        <div class="form-field">
-                            <input required class="form-control" type="text" name="state" placeholder="State..." >
-                        </div>
-                        <div class="form-field">
-                            <input required class="form-control" type="text" name="zipcode" placeholder="Zipcode..." >
-                        </div>
-                        <div class="form-field">
-                            <input required class="form-control" type="text" name="country" placeholder="Country..." >
-                        </div>
-                    </div>
-                    <hr>
-                    <input type="submit" id="form-button" class="btn btn-success btn-block" value="Continue">
-                </form>
-            </div>
-            <br>
-
-            <div class="payment-element hidden" id="payment-info">
-                <small>Paypal Options</small>
-                <button id="make-payment" class="btn btn-outline-dark"
-                style="margin-left: 16px;">Make Payment</button>
-            </div>
+<section class="checkout-page">
+    <header class="checkout-heading">
+        <div>
+            <p class="checkout-eyebrow">SECURE CHECKOUT</p>
+            <h1>Complete your order</h1>
+            <p>Delivery details and payment, all in one place.</p>
         </div>
+        <a href="{% url 'cart' %}" class="checkout-back-link"><span aria-hidden="true">←</span> Back to cart</a>
+    </header>
 
-        <div class="col-lg-6">
-            <div class="box-element">
-                <a href="{% url 'cart' %}" class="btn btn-outline-dark">Back to cart</a>
-                <hr>
-                <h3>Order Summary</h3>
-                <hr>
-                {% for item in items %}
-                <div class="cart-row">
-                    <div style="flex: 2">
-                        <div class="pd-image">
-                            <img class="row-image" src="{{item.product.imageURL}}"/>
-                        </div>
-                    </div>
-                    <div style="flex: 2 ">{{item.product.name}}</div>
-                    <div style="flex: 1">${{item.product.price}}</div>
-                    <div style="flex: 1">
-                        x{{item.quantity}}
+    <div class="checkout-layout">
+        <div class="checkout-main">
+            <section class="checkout-card" aria-labelledby="delivery-heading">
+                <div class="checkout-section-heading">
+                    <span class="checkout-step">1</span>
+                    <div>
+                        <h2 id="delivery-heading">Contact &amp; delivery</h2>
+                        <p>Your information is used to keep you updated on your order.</p>
                     </div>
                 </div>
-                {% endfor %}
-                <hr>
-                <h5>Items: {{order.get_cart_items}}</h5>
-                <h5>Total: ${{order.get_cart_total|floatformat:2}}</h5>
-            </div>
+                <form id="form">
+                    <div id="user-info" class="checkout-fields">
+                        <div class="form-field">
+                            <label for="checkout-name">Full name</label>
+                            <input id="checkout-name" required class="form-control" type="text" name="name"
+                                autocomplete="name" placeholder="Jane Smith">
+                        </div>
+                        <div class="form-field">
+                            <label for="checkout-email">Email address</label>
+                            <input id="checkout-email" required class="form-control" type="email" name="email"
+                                autocomplete="email" placeholder="you@example.com">
+                        </div>
+                    </div>
+                    {% if requires_shipping %}
+                    <div id="shipping-info" class="checkout-fields">
+                        <div class="checkout-subheading">
+                            <h3>Shipping address</h3>
+                            <span>US addresses only</span>
+                        </div>
+                        <div class="form-field">
+                            <label for="recipient-name">Recipient name</label>
+                            <input id="recipient-name" required class="form-control" type="text" name="recipient_name"
+                                value="{{ latest_shipping.recipient_name|default:request.user.get_full_name|default:request.user.username }}"
+                                autocomplete="shipping name" placeholder="Jane Smith">
+                        </div>
+                        <div class="form-field">
+                            <label for="street-address">Street address</label>
+                            <input id="street-address" required class="form-control" type="text" name="address"
+                                value="{{ latest_shipping.address|default:'' }}" autocomplete="shipping address-line1"
+                                placeholder="123 Main Street">
+                        </div>
+                        <div class="checkout-fields-row">
+                            <div class="form-field">
+                                <label for="city">City</label>
+                                <input id="city" required class="form-control" type="text" name="city"
+                                    value="{{ latest_shipping.city|default:'' }}" autocomplete="shipping address-level2"
+                                    placeholder="City">
+                            </div>
+                            <div class="form-field">
+                                <label for="state">State</label>
+                                <select id="state" required class="form-control" name="state"
+                                    autocomplete="shipping address-level1">
+                                    <option value="">Select state</option>
+                                    {% for code, state_name in states %}
+                                    <option value="{{ code }}" {% if latest_shipping.state == code %}selected{% endif %}>{{ state_name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="form-field">
+                                <label for="zipcode">ZIP code</label>
+                                <input id="zipcode" required class="form-control" type="text" name="zipcode"
+                                    value="{{ latest_shipping.zipcode|default:'' }}" autocomplete="shipping postal-code"
+                                    pattern="\d{5}(-\d{4})?" placeholder="ZIP code">
+                            </div>
+                        </div>
+                        <input type="hidden" name="country" value="US">
+                        {% if saved_addresses %}
+                        <div class="form-field">
+                            <p class="saved-address-label">Use a saved address</p>
+                            <div class="saved-address-list">
+                                {% for saved_address in saved_addresses %}
+                                <button type="button" class="saved-address-card"
+                                    data-recipient-name="{{ saved_address.recipient_name }}"
+                                    data-address="{{ saved_address.address }}"
+                                    data-city="{{ saved_address.city }}"
+                                    data-state="{{ saved_address.state }}"
+                                    data-zipcode="{{ saved_address.zipcode }}">
+                                    <strong>{{ saved_address.recipient_name }}</strong>
+                                    <span>{{ saved_address.address }}</span>
+                                    <span>{{ saved_address.city }}, {{ saved_address.state }} {{ saved_address.zipcode }}</span>
+                                </button>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                    <div id="shipping-error" class="checkout-error hidden" role="alert"></div>
+                    <div class="delivery-options-anchor">
+                        <button type="submit" id="form-button" class="checkout-secondary-button">
+                            {% if requires_shipping %}Get delivery options{% else %}Continue to payment{% endif %}
+                        </button>
+
+                        <div id="shipping-rates" class="shipping-rates hidden">
+                            <div class="checkout-subheading">
+                                <h3>Delivery options</h3>
+                                <span>Choose one to continue</span>
+                            </div>
+                            <div id="rate-options" class="rate-options"></div>
+                        </div>
+                    </div>
+                </form>
+            </section>
+
+            <section class="checkout-card checkout-payment hidden" id="payment-info" aria-labelledby="payment-heading">
+                <div class="checkout-section-heading">
+                    <span class="checkout-step">2</span>
+                    <div>
+                        <h2 id="payment-heading">Payment</h2>
+                        <p>Secure payment powered by Stripe. Your card details never touch our servers.</p>
+                    </div>
+                </div>
+                <div class="payment-total-row">
+                    <span>Order total</span>
+                    <strong id="checkout-total">${{ order.get_cart_total|floatformat:2 }}</strong>
+                </div>
+                <div id="payment-loading" class="payment-loading hidden" role="status">Preparing secure payment…</div>
+                <div id="payment-element" class="stripe-payment-element"></div>
+                <div id="payment-error" class="checkout-error hidden" role="alert"></div>
+                <button type="button" id="make-payment" class="checkout-pay-button" disabled>
+                    Pay <span id="pay-button-total">${{ order.get_cart_total|floatformat:2 }}</span>
+                </button>
+                <p class="payment-assurance"><span aria-hidden="true">🔒</span> Encrypted and secure checkout</p>
+            </section>
         </div>
+
+        <aside class="checkout-card order-summary" aria-labelledby="summary-heading">
+            <div class="checkout-section-heading">
+                <span class="checkout-step checkout-step-muted" aria-hidden="true">✓</span>
+                <div>
+                    <h2 id="summary-heading">Order summary</h2>
+                    <p>{{ order.get_cart_items }} item{% if order.get_cart_items != 1 %}s{% endif %} in your bag</p>
+                </div>
+            </div>
+            <div class="summary-items">
+                {% for item in items %}
+                <div class="summary-item">
+                    <div class="summary-image">
+                        {% if item.product.imageURL %}<img src="{{ item.product.imageURL }}" alt="">{% endif %}
+                        <span>{{ item.quantity }}</span>
+                    </div>
+                    <div class="summary-item-copy">
+                        <strong>{{ item.product.name }}</strong>
+                        <span>${{ item.product.price|floatformat:2 }} each</span>
+                    </div>
+                    <strong class="summary-item-price">${{ item.get_total|floatformat:2 }}</strong>
+                </div>
+                {% endfor %}
+            </div>
+            <div class="summary-totals">
+                <div><span>Subtotal</span><span>${{ order.get_cart_total|floatformat:2 }}</span></div>
+                <div><span>Shipping</span><span id="summary-shipping">Calculated next</span></div>
+                <div class="summary-grand-total"><strong>Total</strong><strong id="summary-total">${{ order.get_cart_total|floatformat:2 }}</strong></div>
+            </div>
+            <div class="summary-note">
+                <span aria-hidden="true">✓</span>
+                <span>Shipping is calculated from your address and shown before payment.</span>
+            </div>
+        </aside>
     </div>
+</section>
 
-    <script>
+<script src="https://js.stripe.com/v3/"></script>
+<script>
+    const form = document.getElementById('form');
+    const baseTotal = Number('{{ order.get_cart_total }}');
+    const shippingRequired = '{{ requires_shipping|yesno:"true,false" }}' === 'true';
+    let selectedRate = null;
+    let stripeClient = null;
+    let paymentElements = null;
+    let paymentElement = null;
+    let paymentIntentId = null;
+    let paymentRequestVersion = 0;
 
-        var total = '{{order.get_cart_total}}'
-        var email = '{{email}}'
+    if (user !== 'AnonymousUser') {
+        document.getElementById('user-info').remove();
+    }
 
-        if(user != 'AnonymousUser'){
-            document.getElementById('user-info').innerHTML = ''
-            // document.getElementById('form-wrapper').classList.add('hidden')
+    function showError(elementId, message) {
+        const error = document.getElementById(elementId);
+        error.textContent = message;
+        error.classList.remove('hidden');
+    }
+
+    function clearErrors() {
+        document.getElementById('shipping-error').classList.add('hidden');
+        document.getElementById('payment-error').classList.add('hidden');
+    }
+
+    async function postJson(url, payload) {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrftoken},
+            body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || data);
+        }
+        return data;
+    }
+
+    function checkoutShippingData(rateId) {
+        return {
+            rate_id: rateId,
+            name: shippingRequired ? form.recipient_name.value : '',
+            email: user === 'AnonymousUser' ? form.email.value : '{{ email|escapejs }}',
+            address: shippingRequired ? form.address.value : '',
+            city: shippingRequired ? form.city.value : '',
+            state: shippingRequired ? form.state.value : '',
+            zipcode: shippingRequired ? form.zipcode.value : ''
+        };
+    }
+
+    function showPaymentTotal(rate) {
+        const total = baseTotal + Number(rate.amount);
+        const formattedTotal = '$' + total.toFixed(2);
+        document.getElementById('checkout-total').textContent = formattedTotal;
+        document.getElementById('pay-button-total').textContent = formattedTotal;
+        document.getElementById('summary-shipping').textContent =
+            Number(rate.amount) === 0 ? 'Free' : '$' + Number(rate.amount).toFixed(2);
+        document.getElementById('summary-total').textContent = formattedTotal;
+    }
+
+    async function preparePayment(rate) {
+        const requestVersion = ++paymentRequestVersion;
+        selectedRate = rate;
+        paymentIntentId = null;
+        clearErrors();
+        showPaymentTotal(rate);
+        document.getElementById('payment-info').classList.remove('hidden');
+        document.getElementById('payment-loading').classList.remove('hidden');
+        document.getElementById('make-payment').disabled = true;
+        document.getElementById('payment-element').replaceChildren();
+        if (paymentElement) {
+            paymentElement.destroy();
+            paymentElement = null;
         }
 
+        try {
+            const intent = await postJson('{% url "create_payment_intent" %}', {
+                shipping: checkoutShippingData(rate.object_id)
+            });
+            if (requestVersion !== paymentRequestVersion) return;
 
-        var form = document.getElementById('form')
-        form.addEventListener('submit', (e)=>{
-            e.preventDefault()
-            document.getElementById('form-button').classList.add('hidden')
-            document.getElementById('payment-info').classList.remove('hidden')
-        })
-
-        document.getElementById('make-payment').addEventListener('click', ()=>{
-            submitFormData()
-        })
-
-        function submitFormData(){
-            var userFormData = {
-                'name': null,
-                'email': null,
-                'total': total,
+            stripeClient = stripeClient || Stripe(intent.publishable_key);
+            paymentElements = stripeClient.elements({
+                clientSecret: intent.client_secret,
+                appearance: {
+                    theme: 'stripe',
+                    variables: {
+                        colorPrimary: '#245b49',
+                        colorText: '#22302b',
+                        borderRadius: '10px',
+                        fontFamily: 'Inter, system-ui, sans-serif'
+                    }
+                }
+            });
+            paymentElement = paymentElements.create('payment');
+            paymentElement.mount('#payment-element');
+            paymentIntentId = intent.payment_intent_id;
+            document.getElementById('make-payment').disabled = false;
+        } catch (error) {
+            if (requestVersion === paymentRequestVersion) {
+                showError('payment-error', error.message);
             }
-
-            var shippingInfo = {
-                'address': null,
-                'city': null,
-                'state': null,
-                'zipcode': null
+        } finally {
+            if (requestVersion === paymentRequestVersion) {
+                document.getElementById('payment-loading').classList.add('hidden');
             }
-
-            shippingInfo.address = form.address.value
-            shippingInfo.city = form.city.value
-            shippingInfo.state = form.state.value
-            shippingInfo.zipcode = form.zipcode.value
-
-            if(user == 'AnonymousUser'){
-                userFormData.name = form.name.value
-                userFormData.email = form.email.value
-            }
-            else{
-                userFormData.name = user
-                userFormData.email = email
-            }
-
-            var url = '/process_order/'
-            fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': csrftoken,
-                },
-                body: JSON.stringify({
-                    'form': userFormData,
-                    'shipping': shippingInfo
-                })
-            })
-            .then((res)=>res.json())
-            .then(data => {
-                window.location.href = "{% url 'store' %}"
-            })
         }
+    }
 
-    </script>
+    function displayRates(rates) {
+        const options = document.getElementById('rate-options');
+        options.replaceChildren();
+        document.getElementById('shipping-rates').classList.remove('hidden');
+        rates.forEach((rate) => {
+            const label = document.createElement('label');
+            label.className = 'rate-option';
+            const radio = document.createElement('input');
+            radio.type = 'radio';
+            radio.name = 'shipping-rate';
+            radio.value = rate.object_id;
+            radio.required = true;
+            radio.addEventListener('change', () => preparePayment(rate));
+            const copy = document.createElement('span');
+            copy.className = 'rate-option-copy';
+            const provider = document.createElement('strong');
+            provider.textContent = rate.provider || rate.servicelevel;
+            const service = document.createElement('span');
+            service.textContent = rate.provider ? rate.servicelevel : 'No shipping required';
+            copy.append(provider, service);
+            const price = document.createElement('strong');
+            price.className = 'rate-option-price';
+            price.textContent = '$' + Number(rate.amount).toFixed(2);
+            label.append(radio, copy, price);
+            options.appendChild(label);
+            if (rates.length === 1) {
+                radio.checked = true;
+                preparePayment(rate);
+            }
+        });
+    }
+
+    document.querySelectorAll('.saved-address-card').forEach((button) => {
+        button.addEventListener('click', () => {
+            form.recipient_name.value = button.dataset.recipientName;
+            form.address.value = button.dataset.address;
+            form.city.value = button.dataset.city;
+            form.state.value = button.dataset.state;
+            form.zipcode.value = button.dataset.zipcode;
+            selectedRate = null;
+            paymentRequestVersion += 1;
+            document.getElementById('payment-info').classList.add('hidden');
+            document.getElementById('shipping-rates').classList.add('hidden');
+            document.getElementById('rate-options').replaceChildren();
+            clearErrors();
+        });
+    });
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        clearErrors();
+        selectedRate = null;
+        paymentRequestVersion += 1;
+        document.getElementById('payment-info').classList.add('hidden');
+        document.getElementById('shipping-rates').classList.add('hidden');
+        document.getElementById('form-button').disabled = true;
+        const address = shippingRequired ? {
+            name: form.recipient_name.value,
+            email: user === 'AnonymousUser' ? form.email.value : '{{ email|escapejs }}',
+            address: form.address.value,
+            city: form.city.value,
+            state: form.state.value,
+            zipcode: form.zipcode.value,
+            country: 'US'
+        } : {};
+        try {
+            const data = await postJson('{% url "shipping_rates" %}', address);
+            displayRates(data.rates);
+        } catch (error) {
+            showError('shipping-error', error.message);
+        } finally {
+            document.getElementById('form-button').disabled = false;
+        }
+    });
+
+    async function finalizePayment(id) {
+        const result = await postJson('{% url "processOrder" %}', {payment_intent_id: id});
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+        await postJson('{% url "mark_order_delivered" %}', {order_id: result.order_id});
+        window.location.href = "{% url 'order_history' %}";
+    }
+
+    document.getElementById('make-payment').addEventListener('click', async () => {
+        if (!selectedRate || !paymentIntentId || !paymentElements) return;
+        clearErrors();
+        const button = document.getElementById('make-payment');
+        button.disabled = true;
+        button.classList.add('is-loading');
+        try {
+            const result = await stripeClient.confirmPayment({
+                elements: paymentElements,
+                confirmParams: {return_url: window.location.href},
+                redirect: 'if_required'
+            });
+            if (result.error) {
+                showError('payment-error', result.error.message || 'Your payment could not be completed.');
+                return;
+            }
+            if (result.paymentIntent && result.paymentIntent.status === 'succeeded') {
+                await finalizePayment(result.paymentIntent.id);
+            } else {
+                showError('payment-error', 'Payment is not complete yet. Please try again.');
+            }
+        } catch (error) {
+            showError('payment-error', error.message);
+        } finally {
+            button.classList.remove('is-loading');
+            button.disabled = false;
+        }
+    });
+
+    const redirectIntentId = new URLSearchParams(window.location.search).get('payment_intent');
+    const redirectStatus = new URLSearchParams(window.location.search).get('redirect_status');
+    if (redirectIntentId && redirectStatus === 'succeeded') {
+        const button = document.getElementById('make-payment');
+        button.disabled = true;
+        finalizePayment(redirectIntentId).catch((error) => {
+            showError('payment-error', error.message);
+            document.getElementById('payment-info').classList.remove('hidden');
+            button.disabled = false;
+        });
+    } else if (redirectIntentId) {
+        showError('shipping-error', 'Payment was not completed. Choose a delivery option to try again.');
+        window.history.replaceState({}, document.title, window.location.pathname);
+    }
+</script>
 
 {% endblock content %}
