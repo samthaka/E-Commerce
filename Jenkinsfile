@@ -1,5 +1,10 @@
 pipeline {
-    agent any
+    agent {
+                    node {
+                        label 'built-in' // or your agent/node label
+                        customWorkspace '/home/wizard/ecommerce'
+                    }
+                }
 
     options {
         skipDefaultCheckout(true)
@@ -9,7 +14,7 @@ pipeline {
     parameters {
         string(
             name: 'DEPLOY_BRANCH',
-            defaultValue: 'main',
+            defaultValue: 'master',
             description: 'Branch that is allowed to deploy to production'
         )
     }
