@@ -14,8 +14,11 @@ from pathlib import Path
 import os
 import sys
 from dotenv import load_dotenv
+from django.core.exceptions import ImproperlyConfigured
 
-load_dotenv()
+load_dotenv(
+    os.getenv("DJANGO_ENV_FILE") or Path(__file__).resolve().parent.parent / ".env"
+)
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -27,10 +30,43 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = os.getenv('SECRET_KEY')
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+ENV_CONFIG = os.getenv("ENV_CONFIG", "dev").strip().lower()
+if ENV_CONFIG not in {"dev", "test", "prod"}:
+    raise ImproperlyConfigured(
+        "ENV_CONFIG must be one of: dev, test, prod."
+    )
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS').split(',')
+DEBUG = ENV_CONFIG != "prod"
+
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv("ALLOWED_HOSTS", "").split(",")
+    if host.strip()
+]
+if not ALLOWED_HOSTS:
+    raise ImproperlyConfigured("ALLOWED_HOSTS must contain at least one host.")
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+if ENV_CONFIG == "prod":
+    SECURE_SSL_REDIRECT = (
+        os.getenv("SECURE_SSL_REDIRECT", "true").strip().lower() == "true"
+    )
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "0"))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = (
+        os.getenv("SECURE_HSTS_INCLUDE_SUBDOMAINS", "false").strip().lower()
+        == "true"
+    )
+    SECURE_HSTS_PRELOAD = (
+        os.getenv("SECURE_HSTS_PRELOAD", "false").strip().lower() == "true"
+    )
+CATALOG_CACHE_TIMEOUT = int(os.getenv("CATALOG_CACHE_TIMEOUT", "60"))
+DJANGO_REDIS_LOG_IGNORED_EXCEPTIONS = True
 
 # Application definition
 
@@ -40,9 +76,10 @@ INSTALLED_APPS = [
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
+    'store.apps.StoreConfig',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'store.apps.StoreConfig',
+    'inventory.apps.InventoryConfig',
     'django.contrib.sites',  # Required by django-allauth
     'allauth',
     'allauth.account',  # Core allauth functionality for regular email login
@@ -82,17 +119,57 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'ecommerce.wsgi.application'
+TEST_RUNNER = "ecommerce.test_runner.TestEnvironmentRunner"
+
+if ENV_CONFIG == "test":
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "ecommerce-tests",
+        }
+    }
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": os.getenv("REDIS_URL", "redis://127.0.0.1:6379/1"),
+            "OPTIONS": {
+                "CLIENT_CLASS": "django_redis.client.DefaultClient",
+                "IGNORE_EXCEPTIONS": True,
+                "SOCKET_CONNECT_TIMEOUT": 1,
+                "SOCKET_TIMEOUT": 1,
+                "CONNECTION_POOL_KWARGS": {"max_connections": 50},
+            },
+            "KEY_PREFIX": os.getenv("REDIS_KEY_PREFIX", "ecommerce"),
+            "TIMEOUT": int(os.getenv("CACHE_DEFAULT_TIMEOUT", "300")),
+        }
+    }
 
 
 # Database
 # https://docs.djangoproject.com/en/3.1/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+USE_SQLITE_IN_DEV = os.getenv("USE_SQLITE_IN_DEV", "false").strip().lower() == "true"
+
+if ENV_CONFIG == "test" or (ENV_CONFIG == "dev" and USE_SQLITE_IN_DEV):
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
     }
-}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.mysql",
+            "NAME": os.getenv("MYSQL_DATABASE", ""),
+            "USER": os.getenv("MYSQL_USER", ""),
+            "PASSWORD": os.getenv("MYSQL_PASSWORD", ""),
+            "HOST": os.getenv("MYSQL_HOST", "localhost"),
+            "PORT": os.getenv("MYSQL_PORT", "3306"),
+            "OPTIONS": {"charset": "utf8mb4"},
+        }
+    }
 
 
 # Password validation
@@ -141,7 +218,7 @@ STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
 MEDIA_URL = "/images/"
 
-MEDIA_ROOT = os.path.join(BASE_DIR, 'static/images/products')
+MEDIA_ROOT = BASE_DIR / 'products'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 AUTHENTICATION_BACKENDS = (
@@ -156,6 +233,18 @@ EMAIL_USE_SSL = True
 EMAIL_HOST_USER = os.getenv('GMAIL_ADDRESS', '')
 EMAIL_HOST_PASSWORD = os.getenv('GMAIL_APP_PASSWORD', '')
 DEFAULT_FROM_EMAIL = os.getenv('GMAIL_ADDRESS', '')
+
+SHIPPO_API_TOKEN = os.getenv("SHIPPO_API_TOKEN", "")
+SHIPPO_TEST_MODE = os.getenv("SHIPPO_TEST_MODE", "true").lower() == "true"
+SHIPPO_API_URL = os.getenv("SHIPPO_API_URL", "https://api.goshippo.com")
+SHIPPO_FROM_NAME = os.getenv("SHIPPO_FROM_NAME", "E-commerce")
+SHIPPO_FROM_EMAIL = os.getenv("SHIPPO_FROM_EMAIL", "crpas.ke@gmail.com")
+SHIPPO_FROM_STREET = os.getenv("SHIPPO_FROM_STREET", "215 Clayton St")
+SHIPPO_FROM_CITY = os.getenv("SHIPPO_FROM_CITY", "San Francisco")
+SHIPPO_FROM_STATE = os.getenv("SHIPPO_FROM_STATE", "CA")
+SHIPPO_FROM_ZIP = os.getenv("SHIPPO_FROM_ZIP", "94117")
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY", "")
 
 # Redirect after login
 LOGIN_REDIRECT_URL = '/'

@@ -1,0 +1,9 @@
+[run]
+branch = True
+source = store
+omit =
+    */migrations/*
+    */tests.py
+
+[report]
+show_missing = True

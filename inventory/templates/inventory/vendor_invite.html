@@ -1,0 +1,28 @@
+{% extends "store/main.html" %}
+
+{% block content %}
+<section class="store-intro">
+    <div class="store-intro-copy">
+        <span class="store-eyebrow">VENDOR INVITATION</span>
+        <h1>Set up {{ vendor.shop_name }}</h1>
+        <p>Welcome, {{ vendor.full_name }}. Choose how you want to set up your vendor account.</p>
+    </div>
+</section>
+
+{% if existing_account %}
+<p>An account already exists for {{ vendor.email }}. Sign in with that account to accept this invitation.</p>
+<a href="{% url 'account_login' %}?next={{ google_complete_url|urlencode }}">Sign in</a>
+{% else %}
+<form method="post" class="inventory-product-form">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button class="btn btn-dark" type="submit">Create account</button>
+</form>
+{% endif %}
+
+<div class="mt-4">
+    <p>Or continue with Google using {{ vendor.email }}:</p>
+    <a class="btn btn-outline-secondary"
+        href="/accounts/google/login/?next={{ google_complete_url|urlencode }}">Continue with Google</a>
+</div>
+{% endblock content %}

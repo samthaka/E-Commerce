@@ -1,0 +1,36 @@
+{% extends 'store/main.html' %}
+{% block content %}
+
+<header class="categories-page-heading">
+    <div>
+        <span class="store-eyebrow">SHOP YOUR WAY</span>
+        <h1>Browse categories</h1>
+        <p>Find the right collection and explore all its products.</p>
+    </div>
+    <a class="category-all-link" href="{% url 'store' %}">View all products</a>
+</header>
+
+{% if categories %}
+    {% regroup categories by parent as category_groups %}
+    <div class="category-browser">
+        <div class="category-groups">
+            {% for group in category_groups %}
+            <section class="category-group" aria-label="{% if group.grouper %}{{ group.grouper.full_path }}{% else %}More categories{% endif %}">
+                <h2>{% if group.grouper %}{{ group.grouper.full_path }}{% else %}More categories{% endif %}</h2>
+                <div class="category-links">
+                    {% for category in group.list %}
+                    <a class="category-link" href="{% url 'store' %}?category={{ category.slug|urlencode }}">
+                        <span>{{ category.name }}</span>
+                        <small>{{ category.parent.full_path|default:"Explore collection" }}</small>
+                    </a>
+                    {% endfor %}
+                </div>
+            </section>
+            {% endfor %}
+        </div>
+    </div>
+{% else %}
+    <p class="store-empty">Categories will appear here as products are added.</p>
+{% endif %}
+
+{% endblock content %}
